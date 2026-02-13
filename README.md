@@ -1,70 +1,100 @@
 # Recaf MCP Plugin
 
-让 AI 助手通过 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 操控 [Recaf 4.x](https://github.com/Col-E/Recaf)，实现 Java 字节码的反编译、搜索、分析和重命名等操作。
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![JDK 22+](https://img.shields.io/badge/JDK-22%2B-orange.svg)](https://openjdk.org/)
+[![MCP Protocol](https://img.shields.io/badge/MCP-2024--11--05-green.svg)](https://modelcontextprotocol.io/)
 
-## 架构
+Enable AI assistants to control [Recaf 4.x](https://github.com/Col-E/Recaf) through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) — decompile, search, analyze, and rename Java bytecode directly from your AI workflow.
+
+[中文文档](README_CN.md)
+
+## How It Works
+
+The plugin uses a dual-process architecture to bridge AI assistants with Recaf's powerful bytecode analysis engine:
 
 ```
-┌─────────────────┐     STDIO/JSON-RPC      ┌─────────────────┐     HTTP :9847      ┌─────────────────┐
-│   AI Assistant   │ ◄──────────────────────► │   MCP Server    │ ◄─────────────────► │  Recaf Plugin   │
-│ (Claude Code等)  │                          │ (独立 Java 进程) │                     │ (Bridge Server) │
-└─────────────────┘                          └─────────────────┘                     └────────┬────────┘
-                                                                                              │
-                                                                                     ┌───────┴────────┐
-                                                                                     │   Recaf 4.x    │
-                                                                                     │ (反编译/分析引擎) │
-                                                                                     └────────────────┘
+┌─────────────────┐     STDIO / JSON-RPC     ┌─────────────────┐    HTTP :9847     ┌─────────────────┐
+│  AI Assistant    │ ◄──────────────────────► │   MCP Server    │ ◄────────────────► │  Recaf Plugin   │
+│ (Claude Code,   │                          │ (Standalone JAR) │                    │ (Bridge Server) │
+│  Cursor, etc.)  │                          └─────────────────┘                    └────────┬────────┘
+└─────────────────┘                                                                          │
+                                                                                    ┌────────┴────────┐
+                                                                                    │   Recaf 4.x     │
+                                                                                    │ (Analysis Engine)│
+                                                                                    └─────────────────┘
 ```
 
-双进程设计：
-- **Recaf 插件** — 运行在 Recaf 内部，通过 CDI 注入 Recaf 服务，在 `localhost:9847` 暴露 HTTP API
-- **MCP Server** — 独立 JAR 进程，通过 STDIO 与 AI 通信，将工具调用转发到 Bridge HTTP API
+- **Recaf Plugin (Bridge Server)** — Runs inside Recaf's process. Injects Recaf services via CDI (Jakarta) and exposes them as HTTP endpoints on `localhost:9847`.
+- **MCP Server** — A standalone fat JAR launched by the AI client. Communicates with the AI via STDIO JSON-RPC and forwards tool calls to the Bridge Server over HTTP.
 
-## 提供的 MCP Tools
+This separation is necessary because Recaf runs as a JavaFX desktop application with its own module system, while MCP requires a STDIO-based process that the AI client can spawn and manage.
 
-| Tool | 说明 |
-|------|------|
-| `open_jar` | 打开 JAR/APK/class 文件 |
-| `close_workspace` | 关闭当前工作区 |
-| `list_classes` | 列出所有类（支持过滤） |
-| `get_class_info` | 获取类详情（字段、方法、注解、接口） |
-| `decompile_class` | 反编译类到 Java 源码 |
-| `search_code` | 搜索字符串/类引用/方法引用/字段引用/声明 |
-| `get_call_graph` | 获取方法调用图（caller/callee） |
-| `get_inheritance` | 获取继承层次（父类/子类） |
-| `rename_symbol` | 重命名类/字段/方法（自动更新所有引用） |
-| `export_mappings` | 导出重命名映射（TinyV1/SRG/Proguard） |
+## Available MCP Tools
 
-## 前置要求
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `open_jar` | Open a JAR, APK, or class file for analysis | `path` — absolute file path |
+| `close_workspace` | Close the currently open workspace | — |
+| `list_classes` | List all classes in the workspace | `filter` (optional) — name filter, e.g. `com/example` or `Main` |
+| `get_class_info` | Get class details: fields, methods, interfaces, annotations | `className` — e.g. `com/example/Main` |
+| `decompile_class` | Decompile a class to Java source code | `className` — e.g. `com/example/Main` |
+| `search_code` | Search for strings, class/method/field references, or declarations | `query`, `type` (`string`/`class`/`method`/`field`/`declaration`), `maxResults` |
+| `get_call_graph` | Get method call graph (callers and callees) | `className`, `methodName` (optional), `depth` (default: 3) |
+| `get_inheritance` | Get inheritance hierarchy (parents/children) | `className`, `direction` (`both`/`parents`/`children`) |
+| `rename_symbol` | Rename a class, field, or method (updates all references) | `type` (`class`/`field`/`method`), `oldName`, `newName`, `className` (for field/method), `descriptor` (optional) |
+| `export_mappings` | Export rename mappings to a file | `format` (`TinyV1`/`SRG`/`Proguard`/...), `outputPath` |
 
-- JDK 22+
-- Recaf 4.x（snapshot `d07958a5c7`）
+## MCP Resources
 
-## 构建
+| URI | Description |
+|-----|-------------|
+| `recaf://workspace` | Current workspace information (JSON) |
+| `recaf://classes` | Full class list of the current workspace (JSON) |
+
+## Prerequisites
+
+- **JDK 22+** — Required by Recaf 4.x. Make sure `java` on your PATH points to JDK 22 or higher.
+- **Recaf 4.x** — This plugin is built against snapshot `d07958a5c7`. The build system will download it automatically.
+
+## Build
 
 ```bash
+git clone https://github.com/your-repo/recaf-mcp-plugin.git
+cd recaf-mcp-plugin
 ./gradlew build
 ```
 
-产出两个 JAR：
-- `build/libs/recaf-mcp-plugin-workspace-1.0.0.jar` — Recaf 插件
-- `build/mcp/recaf-mcp-server-1.0.0.jar` — MCP Server（Shadow fat JAR）
+This produces two JARs:
 
-## 使用
+| File | Purpose |
+|------|---------|
+| `build/libs/recaf-mcp-plugin-1.0.0.jar` | Recaf plugin (loads inside Recaf, runs the Bridge Server) |
+| `build/mcp/recaf-mcp-server-1.0.0.jar` | MCP Server (standalone fat JAR, launched by AI client) |
 
-### 1. 启动 Recaf
+## Setup & Usage
+
+### Step 1: Start Recaf with the Plugin
+
+**Option A: Run directly from the project (recommended for development)**
 
 ```bash
-# 方式一：从项目直接运行（自动加载插件）
 ./gradlew runRecaf
-
-# 方式二：手动安装插件
-# 将 build/libs/*.jar 复制到 Recaf 插件目录：
-#   macOS/Linux: $HOME/Recaf/plugins/
-#   Windows:     %APPDATA%/Recaf/plugins/
 ```
 
-启动后在 Recaf 的 Logging 窗口应看到：
+This builds the plugin and launches Recaf with it auto-loaded.
+
+**Option B: Manual installation**
+
+Copy `build/libs/recaf-mcp-plugin-1.0.0.jar` to Recaf's plugin directory:
+
+| OS | Plugin Directory |
+|----|-----------------|
+| macOS / Linux | `~/Recaf/plugins/` |
+| Windows | `%APPDATA%/Recaf/plugins/` |
+
+Then start Recaf normally.
+
+**Verify:** Look for this in Recaf's Logging panel:
 
 ```
 ========================================
@@ -73,63 +103,149 @@
 ========================================
 ```
 
-### 2. 配置 AI 客户端
+### Step 2: Configure Your AI Client
 
-以 Claude Code 为例，在 `~/.claude.json` 中添加：
+#### Claude Code
+
+Add to `~/.claude.json`:
 
 ```json
 {
   "mcpServers": {
     "recaf": {
       "command": "java",
-      "args": ["-jar", "/你的路径/build/mcp/recaf-mcp-server-1.0.0.jar"]
+      "args": ["-jar", "/absolute/path/to/build/mcp/recaf-mcp-server-1.0.0.jar"]
     }
   }
 }
 ```
 
-然后重启 Claude Code，即可使用 `recaf` 相关工具。
+Then restart Claude Code. The `recaf` tools will appear in your tool list.
 
-### 3. 开始使用
+#### Cursor
 
-在 AI 对话中直接说：
+Add to your MCP configuration (Settings → MCP):
+
+```json
+{
+  "mcpServers": {
+    "recaf": {
+      "command": "java",
+      "args": ["-jar", "/absolute/path/to/build/mcp/recaf-mcp-server-1.0.0.jar"]
+    }
+  }
+}
+```
+
+#### Other MCP-Compatible Clients
+
+Any client that supports the MCP protocol can use this plugin. Configure it to spawn the MCP Server JAR via `java -jar` over STDIO.
+
+### Step 3: Start Using
+
+Once both Recaf and your AI client are running, you can interact naturally:
 
 ```
-打开 /path/to/target.jar，列出所有类
-反编译 com/example/Main 这个类
-搜索所有包含 "password" 的字符串
-分析 com/example/Main 的调用图
-把 com/example/a 重命名为 com/example/LoginManager
-导出映射为 TinyV1 格式到 /tmp/mappings.tiny
+Open /path/to/target.jar and list all classes
+Decompile the com/example/Main class
+Search for all strings containing "password"
+Show me the call graph for com/example/Main
+Rename com/example/a to com/example/LoginManager
+Export the mappings as TinyV1 to /tmp/mappings.tiny
 ```
 
-## 项目结构
+## Example Workflows
+
+### Reverse Engineering an Obfuscated JAR
+
+```
+1. "Open /path/to/obfuscated.jar"
+2. "List all classes" — get an overview of the package structure
+3. "Decompile com/a/b/c" — read the decompiled source
+4. "Search for strings containing 'http'" — find network endpoints
+5. "Get the call graph for com/a/b/c method d" — understand control flow
+6. "Rename com/a/b/c to com/app/NetworkManager" — give it a meaningful name
+7. "Export mappings as TinyV1 to ./mappings.tiny" — save your work
+```
+
+### Analyzing Library Dependencies
+
+```
+1. "Open /path/to/library.jar"
+2. "Search for class references to javax/crypto" — find crypto usage
+3. "Get inheritance of com/lib/BaseHandler" — see the class hierarchy
+4. "Decompile com/lib/impl/SecureHandler" — inspect implementation details
+```
+
+## Project Structure
 
 ```
 src/main/java/dev/recaf/mcp/
-├── RecafMcpPlugin.java              # 插件入口，注入 Recaf 服务
+├── RecafMcpPlugin.java                  # Plugin entry point — CDI injection of Recaf services
 ├── bridge/
-│   ├── BridgeServer.java            # HTTP API 服务器 (:9847)
+│   ├── BridgeServer.java                # HTTP server on :9847 — routes requests to handlers
 │   └── handlers/
-│       ├── WorkspaceHandler.java    # 工作区管理
-│       ├── DecompileHandler.java    # 反编译
-│       ├── SearchHandler.java       # 代码搜索
-│       ├── AnalysisHandler.java     # 调用图 & 继承分析
-│       └── MappingHandler.java      # 重命名 & 映射导出
+│       ├── WorkspaceHandler.java        # /workspace/* — open, close, list classes, class info
+│       ├── DecompileHandler.java        # /decompile — decompile class to Java source
+│       ├── SearchHandler.java           # /search — string, class, method, field, declaration search
+│       ├── AnalysisHandler.java         # /analysis/* — call graph & inheritance hierarchy
+│       └── MappingHandler.java          # /mapping/* — rename symbols & export mappings
 ├── server/
-│   ├── RecafMcpServer.java          # MCP Server (STDIO JSON-RPC)
-│   └── BridgeClient.java           # HTTP 客户端
+│   ├── RecafMcpServer.java              # MCP Server — STDIO JSON-RPC, tool/resource dispatch
+│   └── BridgeClient.java               # HTTP client — forwards MCP tool calls to Bridge Server
 └── util/
-    └── JsonUtil.java                # JSON 工具
+    └── JsonUtil.java                    # JSON response helpers
 ```
 
-## 技术细节
+## Bridge HTTP API Reference
 
-- MCP 协议版本：`2024-11-05`
-- Bridge 端口：`9847`（硬编码）
-- MCP Server 自实现轻量 JSON-RPC，无 SDK 依赖，仅依赖 Gson
-- 反编译超时：30 秒
-- 搜索默认最大结果数：100
+All endpoints accept POST with JSON body and return JSON responses.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Health check — returns `{"status":"ok"}` |
+| `POST /workspace/open` | Open a file: `{"path": "/path/to/file.jar"}` |
+| `POST /workspace/close` | Close workspace: `{}` |
+| `GET /workspace/info` | Get workspace info |
+| `POST /workspace/classes` | List classes: `{"filter": "optional"}` |
+| `POST /workspace/class-info` | Class details: `{"className": "com/example/Main"}` |
+| `POST /decompile` | Decompile: `{"className": "com/example/Main"}` |
+| `POST /search` | Search: `{"query": "text", "type": "string", "maxResults": 100}` |
+| `POST /analysis/call-graph` | Call graph: `{"className": "...", "methodName": "...", "depth": 3}` |
+| `POST /analysis/inheritance` | Inheritance: `{"className": "...", "direction": "both"}` |
+| `POST /mapping/rename` | Rename: `{"type": "class", "oldName": "...", "newName": "..."}` |
+| `POST /mapping/export` | Export: `{"format": "TinyV1", "outputPath": "/path/to/output"}` |
+
+## Technical Details
+
+| Item | Value |
+|------|-------|
+| MCP Protocol Version | `2024-11-05` |
+| Bridge Port | `9847` (hardcoded) |
+| MCP Server Dependencies | Gson only (no MCP SDK — lightweight custom JSON-RPC implementation) |
+| Decompile Timeout | 30 seconds |
+| Default Max Search Results | 100 |
+| Java Toolchain | JDK 22+ |
+| Build System | Gradle with Shadow plugin for fat JAR |
+
+## Troubleshooting
+
+**"Connection refused" errors from MCP Server**
+- Make sure Recaf is running and the Bridge Server is active on port 9847.
+- Check Recaf's Logging panel for the startup banner.
+
+**MCP tools not appearing in AI client**
+- Verify the path to `recaf-mcp-server-1.0.0.jar` is correct and absolute.
+- Make sure `java` points to JDK 22+: run `java -version` to check.
+- Restart your AI client after updating the MCP configuration.
+
+**Decompilation returns empty or errors**
+- Ensure a workspace is open (use `open_jar` first).
+- Check the class name format: use `/` separators (e.g. `com/example/Main`), not `.` separators.
+
+**Build fails**
+- Ensure JDK 22+ is installed. Run `./gradlew -q javaToolchains` to see detected JDKs.
+- If using a non-default JDK, configure a [Gradle toolchain](https://docs.gradle.org/current/userguide/toolchains.html).
 
 ## License
 
