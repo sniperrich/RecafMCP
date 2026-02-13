@@ -3,6 +3,7 @@ package dev.recaf.mcp.bridge.handlers;
 import com.google.gson.JsonObject;
 import com.sun.net.httpserver.HttpExchange;
 import dev.recaf.mcp.bridge.BridgeServer;
+import dev.recaf.mcp.util.ErrorMapper;
 import dev.recaf.mcp.util.JsonUtil;
 import org.slf4j.Logger;
 import software.coley.recaf.analytics.logging.Logging;
@@ -15,6 +16,7 @@ import software.coley.recaf.workspace.model.Workspace;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Handles class decompilation requests.
@@ -36,7 +38,7 @@ public class DecompileHandler {
 	public void handle(HttpExchange exchange) throws IOException {
 		Workspace workspace = workspaceManager.getCurrent();
 		if (workspace == null) {
-			BridgeServer.sendJson(exchange, 200, JsonUtil.errorResponse("No workspace is open"));
+			BridgeServer.sendJson(exchange, 200, ErrorMapper.noWorkspace());
 			return;
 		}
 
@@ -45,14 +47,14 @@ public class DecompileHandler {
 		String className = JsonUtil.getString(req, "className", null);
 
 		if (className == null || className.isBlank()) {
-			BridgeServer.sendJson(exchange, 400, JsonUtil.errorResponse("Missing 'className' parameter"));
+			BridgeServer.sendJson(exchange, 400, ErrorMapper.missingParam("className"));
 			return;
 		}
 
 		String normalizedName = className.replace('.', '/');
 		ClassPathNode classPath = workspace.findJvmClass(normalizedName);
 		if (classPath == null) {
-			BridgeServer.sendJson(exchange, 404, JsonUtil.errorResponse("Class not found: " + className));
+			BridgeServer.sendJson(exchange, 404, ErrorMapper.classNotFound(className));
 			return;
 		}
 
@@ -77,9 +79,15 @@ public class DecompileHandler {
 			}
 
 			BridgeServer.sendJson(exchange, 200, JsonUtil.successResponse(data));
+		} catch (TimeoutException e) {
+			logger.error("Decompilation timed out for '{}'", className);
+			BridgeServer.sendJson(exchange, 500, ErrorMapper.errorResponse(
+					ErrorMapper.DECOMPILE_TIMEOUT,
+					"Decompilation of " + className + " timed out after 30 seconds",
+					"The class may be too complex. Try a different decompiler or a simpler class."));
 		} catch (Exception e) {
 			logger.error("Decompilation failed for '{}'", className, e);
-			BridgeServer.sendJson(exchange, 500, JsonUtil.errorResponse("Decompilation failed: " + e.getMessage()));
+			BridgeServer.sendJson(exchange, 500, ErrorMapper.mapException("Decompile " + className, e));
 		}
 	}
 }

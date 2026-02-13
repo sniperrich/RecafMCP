@@ -3,12 +3,12 @@ package dev.recaf.mcp.bridge.handlers;
 import com.google.gson.JsonObject;
 import com.sun.net.httpserver.HttpExchange;
 import dev.recaf.mcp.bridge.BridgeServer;
+import dev.recaf.mcp.util.ErrorMapper;
 import dev.recaf.mcp.util.JsonUtil;
 import org.slf4j.Logger;
 import software.coley.recaf.analytics.logging.Logging;
 import software.coley.recaf.info.ClassInfo;
 import software.coley.recaf.info.member.ClassMember;
-import software.coley.recaf.path.ClassPathNode;
 import software.coley.recaf.services.search.SearchService;
 import software.coley.recaf.services.search.match.StringPredicateProvider;
 import software.coley.recaf.services.search.query.DeclarationQuery;
@@ -21,7 +21,6 @@ import software.coley.recaf.workspace.model.Workspace;
 
 import java.io.IOException;
 import java.util.*;
-import java.util.function.BiPredicate;
 
 /**
  * Handles search requests: string search, class/method/field reference search.
@@ -47,7 +46,7 @@ public class SearchHandler {
 	public void handle(HttpExchange exchange) throws IOException {
 		Workspace workspace = workspaceManager.getCurrent();
 		if (workspace == null) {
-			BridgeServer.sendJson(exchange, 200, JsonUtil.errorResponse("No workspace is open"));
+			BridgeServer.sendJson(exchange, 200, ErrorMapper.noWorkspace());
 			return;
 		}
 
@@ -57,7 +56,7 @@ public class SearchHandler {
 		String type = JsonUtil.getString(req, "type", "string");
 
 		if (query == null || query.isBlank()) {
-			BridgeServer.sendJson(exchange, 400, JsonUtil.errorResponse("Missing 'query' parameter"));
+			BridgeServer.sendJson(exchange, 400, ErrorMapper.missingParam("query"));
 			return;
 		}
 
@@ -68,34 +67,29 @@ public class SearchHandler {
 
 			switch (type.toLowerCase()) {
 				case "class" -> {
-					// Search for references to a class
 					results = searchService.search(workspace, new ReferenceQuery(
 							stringPredicateProvider.newContainsPredicate(normalizedQuery),
 							null, null));
 				}
 				case "method" -> {
-					// Search for references to a method name
 					results = searchService.search(workspace, new ReferenceQuery(
 							null,
 							stringPredicateProvider.newContainsPredicate(query),
 							null));
 				}
 				case "field" -> {
-					// Search for references to a field name
 					results = searchService.search(workspace, new ReferenceQuery(
 							null,
 							stringPredicateProvider.newContainsPredicate(query),
 							null));
 				}
 				case "declaration" -> {
-					// Search for declarations matching the query
 					results = searchService.search(workspace, new DeclarationQuery(
 							stringPredicateProvider.newContainsPredicate(normalizedQuery),
 							stringPredicateProvider.newContainsPredicate(query),
 							null));
 				}
 				default -> {
-					// String search (default)
 					results = searchService.search(workspace, new StringQuery(
 							stringPredicateProvider.newContainsPredicate(query)));
 				}
@@ -109,7 +103,6 @@ public class SearchHandler {
 				if (count >= maxResults) break;
 
 				JsonObject item = new JsonObject();
-				// Extract path info
 				var path = result.getPath();
 				ClassInfo classValue = path.getValueOfType(ClassInfo.class);
 				if (classValue != null) {
@@ -133,7 +126,7 @@ public class SearchHandler {
 			BridgeServer.sendJson(exchange, 200, JsonUtil.successResponse(data));
 		} catch (Exception e) {
 			logger.error("Search failed for query '{}' type '{}'", query, type, e);
-			BridgeServer.sendJson(exchange, 500, JsonUtil.errorResponse("Search failed: " + e.getMessage()));
+			BridgeServer.sendJson(exchange, 500, ErrorMapper.mapException("Search", e));
 		}
 	}
 }

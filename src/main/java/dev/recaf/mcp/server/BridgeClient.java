@@ -72,14 +72,22 @@ public class BridgeClient {
 	}
 
 	/**
-	 * Extract the "data" field from a bridge response, or throw if error.
+	 * Extract the "data" field from a bridge response, or return error with code/suggestion.
 	 */
 	public String extractData(String response) {
 		JsonObject obj = JsonParser.parseString(response).getAsJsonObject();
 		String status = obj.has("status") ? obj.get("status").getAsString() : "unknown";
 		if ("error".equals(status)) {
-			String msg = obj.has("message") ? obj.get("message").getAsString() : "Unknown bridge error";
-			return "{\"error\": \"" + msg.replace("\"", "\\\"") + "\"}";
+			// Build structured error with code and suggestion if available
+			JsonObject error = new JsonObject();
+			error.addProperty("error", obj.has("message") ? obj.get("message").getAsString() : "Unknown bridge error");
+			if (obj.has("code")) {
+				error.addProperty("code", obj.get("code").getAsString());
+			}
+			if (obj.has("suggestion")) {
+				error.addProperty("suggestion", obj.get("suggestion").getAsString());
+			}
+			return error.toString();
 		}
 		if (obj.has("data")) {
 			return obj.get("data").toString();

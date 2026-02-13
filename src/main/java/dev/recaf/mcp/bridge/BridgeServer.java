@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import dev.recaf.mcp.bridge.handlers.*;
+import dev.recaf.mcp.util.ErrorMapper;
 import dev.recaf.mcp.util.JsonUtil;
 import org.slf4j.Logger;
 import software.coley.recaf.analytics.logging.Logging;
@@ -46,6 +47,9 @@ public class BridgeServer {
 	private final MappingApplierService mappingApplierService;
 	private final MappingFormatManager mappingFormatManager;
 	private final AggregateMappingManager aggregateMappingManager;
+
+	// Multi-workspace registry
+	private final WorkspaceRegistry workspaceRegistry = new WorkspaceRegistry();
 
 	public BridgeServer(WorkspaceManager workspaceManager,
 						ResourceImporter resourceImporter,
@@ -96,13 +100,15 @@ public class BridgeServer {
 			sendJson(exchange, 200, "{\"status\":\"ok\"}");
 		}));
 
-		// Workspace endpoints
-		WorkspaceHandler wsHandler = new WorkspaceHandler(workspaceManager, resourceImporter);
+		// Workspace endpoints (with multi-workspace registry)
+		WorkspaceHandler wsHandler = new WorkspaceHandler(workspaceManager, resourceImporter, workspaceRegistry);
 		server.createContext("/workspace/open", wrapHandler(wsHandler::handleOpen));
 		server.createContext("/workspace/close", wrapHandler(wsHandler::handleClose));
 		server.createContext("/workspace/info", wrapHandler(wsHandler::handleInfo));
 		server.createContext("/workspace/classes", wrapHandler(wsHandler::handleListClasses));
 		server.createContext("/workspace/class-info", wrapHandler(wsHandler::handleClassInfo));
+		server.createContext("/workspace/switch", wrapHandler(wsHandler::handleSwitch));
+		server.createContext("/workspace/list-workspaces", wrapHandler(wsHandler::handleListWorkspaces));
 
 		// Decompile endpoints
 		DecompileHandler decompHandler = new DecompileHandler(workspaceManager, decompilerManager);
@@ -123,12 +129,30 @@ public class BridgeServer {
 		server.createContext("/mapping/rename", wrapHandler(mappingHandler::handleRename));
 		server.createContext("/mapping/export", wrapHandler(mappingHandler::handleExport));
 
+		// Bytecode editing endpoints
+		BytecodeHandler bytecodeHandler = new BytecodeHandler(workspaceManager);
+		server.createContext("/bytecode/edit-method", wrapHandler(bytecodeHandler::handleEditMethod));
+		server.createContext("/bytecode/edit-field", wrapHandler(bytecodeHandler::handleEditField));
+		server.createContext("/bytecode/remove-member", wrapHandler(bytecodeHandler::handleRemoveMember));
+		server.createContext("/bytecode/add-field", wrapHandler(bytecodeHandler::handleAddField));
+		server.createContext("/bytecode/add-method", wrapHandler(bytecodeHandler::handleAddMethod));
+
+		// Diff endpoint
+		DiffHandler diffHandler = new DiffHandler(workspaceManager, decompilerManager);
+		server.createContext("/diff", wrapHandler(diffHandler::handle));
+
+		// Export endpoints
+		ExportHandler exportHandler = new ExportHandler(workspaceManager, decompilerManager);
+		server.createContext("/export/jar", wrapHandler(exportHandler::handleExportJar));
+		server.createContext("/export/source", wrapHandler(exportHandler::handleExportSource));
+
 		server.start();
 		logger.info("MCP Bridge Server started on port {}", port);
 	}
 
 	public void stop() {
 		if (server != null) {
+			workspaceRegistry.clear();
 			server.stop(1);
 			logger.info("MCP Bridge Server stopped");
 		}
@@ -150,7 +174,7 @@ public class BridgeServer {
 				logger.info("[MCP Bridge] {} {} completed in {}ms", method, path, elapsed);
 			} catch (Exception e) {
 				logger.error("[MCP Bridge] {} {} failed: {}", method, path, e.getMessage(), e);
-				sendJson(exchange, 500, JsonUtil.errorResponse(e.getMessage()));
+				sendJson(exchange, 500, ErrorMapper.mapException(path, e));
 			}
 		};
 	}

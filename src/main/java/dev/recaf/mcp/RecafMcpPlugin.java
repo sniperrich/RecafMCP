@@ -24,7 +24,7 @@ import software.coley.recaf.services.workspace.io.ResourceImporter;
  * so that an external MCP Server process can relay AI tool calls to Recaf.
  */
 @Dependent
-@PluginInformation(id = "dev.recaf.mcp.recaf-mcp-plugin", version = "1.0.0", name = "Recaf MCP Plugin", description = "MCP bridge plugin that exposes Recaf services to AI assistants via the Model Context Protocol")
+@PluginInformation(id = "dev.recaf.mcp.recaf-mcp-plugin", version = "1.1.0", name = "Recaf MCP Plugin", description = "MCP bridge plugin that exposes Recaf services to AI assistants via the Model Context Protocol")
 public class RecafMcpPlugin implements Plugin {
 	private static final Logger logger = Logging.get(RecafMcpPlugin.class);
 

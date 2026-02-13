@@ -3,13 +3,13 @@ package dev.recaf.mcp.bridge.handlers;
 import com.google.gson.JsonObject;
 import com.sun.net.httpserver.HttpExchange;
 import dev.recaf.mcp.bridge.BridgeServer;
+import dev.recaf.mcp.util.ErrorMapper;
 import dev.recaf.mcp.util.JsonUtil;
 import org.slf4j.Logger;
 import software.coley.recaf.analytics.logging.Logging;
 import software.coley.recaf.services.mapping.IntermediateMappings;
 import software.coley.recaf.services.mapping.MappingApplierService;
 import software.coley.recaf.services.mapping.MappingResults;
-import software.coley.recaf.services.mapping.Mappings;
 import software.coley.recaf.services.mapping.aggregate.AggregateMappingManager;
 import software.coley.recaf.services.mapping.aggregate.AggregatedMappings;
 import software.coley.recaf.services.mapping.format.MappingFileFormat;
@@ -50,7 +50,7 @@ public class MappingHandler {
 	public void handleRename(HttpExchange exchange) throws IOException {
 		Workspace workspace = workspaceManager.getCurrent();
 		if (workspace == null) {
-			BridgeServer.sendJson(exchange, 200, JsonUtil.errorResponse("No workspace is open"));
+			BridgeServer.sendJson(exchange, 200, ErrorMapper.noWorkspace());
 			return;
 		}
 
@@ -63,7 +63,7 @@ public class MappingHandler {
 		String descriptor = JsonUtil.getString(req, "descriptor", null);
 
 		if (type == null || oldName == null || newName == null) {
-			BridgeServer.sendJson(exchange, 400, JsonUtil.errorResponse("Missing required parameters: type, oldName, newName"));
+			BridgeServer.sendJson(exchange, 400, ErrorMapper.missingParam("type", "oldName", "newName"));
 			return;
 		}
 
@@ -78,7 +78,7 @@ public class MappingHandler {
 				}
 				case "field" -> {
 					if (className == null) {
-						BridgeServer.sendJson(exchange, 400, JsonUtil.errorResponse("Missing 'className' for field rename"));
+						BridgeServer.sendJson(exchange, 400, ErrorMapper.missingParam("className"));
 						return;
 					}
 					String normalizedClass = className.replace('.', '/');
@@ -86,21 +86,27 @@ public class MappingHandler {
 				}
 				case "method" -> {
 					if (className == null) {
-						BridgeServer.sendJson(exchange, 400, JsonUtil.errorResponse("Missing 'className' for method rename"));
+						BridgeServer.sendJson(exchange, 400, ErrorMapper.missingParam("className"));
 						return;
 					}
 					String normalizedClass = className.replace('.', '/');
 					mappings.addMethod(normalizedClass, descriptor, oldName, newName);
 				}
 				default -> {
-					BridgeServer.sendJson(exchange, 400, JsonUtil.errorResponse("Invalid type: " + type + ". Use: class, field, method"));
+					BridgeServer.sendJson(exchange, 400, ErrorMapper.errorResponse(
+							ErrorMapper.INVALID_PARAMS,
+							"Invalid type: " + type + ". Use: class, field, method",
+							"The 'type' parameter must be one of: class, field, method."));
 					return;
 				}
 			}
 
 			var applier = mappingApplierService.inCurrentWorkspace();
 			if (applier == null) {
-				BridgeServer.sendJson(exchange, 500, JsonUtil.errorResponse("No workspace applier available"));
+				BridgeServer.sendJson(exchange, 500, ErrorMapper.errorResponse(
+						ErrorMapper.INTERNAL_ERROR,
+						"No workspace applier available",
+						"Ensure a workspace is open and try again."));
 				return;
 			}
 
@@ -116,7 +122,7 @@ public class MappingHandler {
 			logger.info("[MCP] Renamed {} '{}' -> '{}' ({} classes affected)", type, oldName, newName, results.getMappedClasses().size());
 		} catch (Exception e) {
 			logger.error("Rename failed: {} '{}' -> '{}'", type, oldName, newName, e);
-			BridgeServer.sendJson(exchange, 500, JsonUtil.errorResponse("Rename failed: " + e.getMessage()));
+			BridgeServer.sendJson(exchange, 500, ErrorMapper.mapException("Rename " + type, e));
 		}
 	}
 
@@ -126,7 +132,7 @@ public class MappingHandler {
 	public void handleExport(HttpExchange exchange) throws IOException {
 		Workspace workspace = workspaceManager.getCurrent();
 		if (workspace == null) {
-			BridgeServer.sendJson(exchange, 200, JsonUtil.errorResponse("No workspace is open"));
+			BridgeServer.sendJson(exchange, 200, ErrorMapper.noWorkspace());
 			return;
 		}
 
@@ -136,7 +142,6 @@ public class MappingHandler {
 		String outputPath = JsonUtil.getString(req, "outputPath", null);
 
 		if (format == null || outputPath == null) {
-			// List available formats if none specified
 			if (format == null && outputPath == null) {
 				Set<String> formats = mappingFormatManager.getMappingFileFormats();
 				JsonObject data = new JsonObject();
@@ -144,22 +149,27 @@ public class MappingHandler {
 				BridgeServer.sendJson(exchange, 200, JsonUtil.successResponse(data));
 				return;
 			}
-			BridgeServer.sendJson(exchange, 400, JsonUtil.errorResponse("Missing required parameters: format, outputPath"));
+			BridgeServer.sendJson(exchange, 400, ErrorMapper.missingParam("format", "outputPath"));
 			return;
 		}
 
 		try {
 			AggregatedMappings aggMappings = aggregateMappingManager.getAggregatedMappings();
 			if (aggMappings == null) {
-				BridgeServer.sendJson(exchange, 200, JsonUtil.errorResponse("No mappings available to export"));
+				BridgeServer.sendJson(exchange, 200, ErrorMapper.errorResponse(
+						ErrorMapper.INVALID_PARAMS,
+						"No mappings available to export",
+						"Use 'rename_symbol' to create some mappings first."));
 				return;
 			}
 
 			MappingFileFormat fileFormat = mappingFormatManager.createFormatInstance(format);
 			if (fileFormat == null) {
 				Set<String> formats = mappingFormatManager.getMappingFileFormats();
-				BridgeServer.sendJson(exchange, 400, JsonUtil.errorResponse(
-						"Unknown format: " + format + ". Available: " + formats));
+				BridgeServer.sendJson(exchange, 400, ErrorMapper.errorResponse(
+						ErrorMapper.INVALID_PARAMS,
+						"Unknown format: " + format,
+						"Available formats: " + formats));
 				return;
 			}
 
@@ -175,7 +185,7 @@ public class MappingHandler {
 			logger.info("[MCP] Exported mappings: format='{}', path='{}'", format, outputPath);
 		} catch (Exception e) {
 			logger.error("Mapping export failed", e);
-			BridgeServer.sendJson(exchange, 500, JsonUtil.errorResponse("Export failed: " + e.getMessage()));
+			BridgeServer.sendJson(exchange, 500, ErrorMapper.mapException("Export mappings", e));
 		}
 	}
 }

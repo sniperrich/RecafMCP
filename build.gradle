@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'dev.recaf.mcp'
-version = '1.0.0'
+version = '1.1.0'
 
 ext {
     // The version of Recaf we're building against.

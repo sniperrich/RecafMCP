@@ -10,6 +10,9 @@ import java.util.*;
  * Lightweight MCP Server for Recaf - runs as a standalone process.
  * Implements the MCP JSON-RPC protocol over STDIO directly (no SDK dependency).
  * Relays tool calls to the Recaf Bridge Server via HTTP.
+ *
+ * Supports 16 tools: workspace management, decompilation, search, analysis,
+ * mapping, bytecode editing, class diff, and export.
  */
 public class RecafMcpServer {
 
@@ -82,38 +85,85 @@ public class RecafMcpServer {
 
 		JsonObject serverInfo = new JsonObject();
 		serverInfo.addProperty("name", "recaf-mcp");
-		serverInfo.addProperty("version", "1.0.0");
+		serverInfo.addProperty("version", "1.1.0");
 		result.add("serverInfo", serverInfo);
 
 		return result;
 	}
 
-	// ==================== Tools ====================
+	// ==================== Tools (16 total) ====================
 
 	private JsonObject buildToolsList() {
 		JsonArray tools = new JsonArray();
-		tools.add(toolDef("open_jar", "Open a JAR, APK, or class file in Recaf for analysis",
+
+		// 1. open_jar
+		tools.add(toolDef("open_jar", "Open a JAR, APK, or class file in Recaf for analysis. Returns a workspaceId for multi-workspace support.",
 				requiredProps(prop("path", "string", "Absolute path to the JAR/APK/class file to open"))));
-		tools.add(toolDef("close_workspace", "Close the currently open workspace in Recaf",
-				new JsonObject()));
-		tools.add(toolDef("list_classes", "List all classes in the current workspace, optionally filtered by name",
-				optionalProps(prop("filter", "string", "Optional filter string to match class names (e.g. 'com/example' or 'Main')"))));
+
+		// 2. close_workspace
+		tools.add(toolDef("close_workspace", "Close the currently open workspace in Recaf, or close a specific workspace by ID",
+				optionalProps(prop("workspaceId", "string", "Optional workspace ID to close. If omitted, closes the current workspace."))));
+
+		// 3. list_classes (with pagination)
+		tools.add(toolDef("list_classes", "List all classes in the current workspace, optionally filtered by name. Supports offset/limit pagination.",
+				optionalProps(
+						prop("filter", "string", "Optional filter string to match class names (e.g. 'com/example' or 'Main')"),
+						prop("offset", "integer", "Starting offset for pagination (default: 0)"),
+						prop("limit", "integer", "Maximum number of classes to return (default: 500)"))));
+
+		// 4. get_class_info
 		tools.add(toolDef("get_class_info", "Get detailed class information including fields, methods, interfaces, and annotations",
 				requiredProps(prop("className", "string", "Fully qualified class name (e.g. 'com/example/Main' or 'com.example.Main')"))));
+
+		// 5. decompile_class
 		tools.add(toolDef("decompile_class", "Decompile a Java class to source code",
 				requiredProps(prop("className", "string", "Fully qualified class name to decompile (e.g. 'com/example/Main' or 'com.example.Main')"))));
+
+		// 6. search_code
 		tools.add(toolDef("search_code", "Search for strings, class/method/field references, or declarations in the workspace",
 				searchSchema()));
+
+		// 7. get_call_graph
 		tools.add(toolDef("get_call_graph", "Get the call graph showing which methods call which, with callers and callees",
 				callGraphSchema()));
+
+		// 8. get_inheritance
 		tools.add(toolDef("get_inheritance", "Get the inheritance hierarchy (parents and/or children) of a class",
 				inheritanceSchema()));
+
+		// 9. rename_symbol
 		tools.add(toolDef("rename_symbol", "Rename a class, field, or method. Updates all references across the workspace",
 				renameSchema()));
+
+		// 10. export_mappings
 		tools.add(toolDef("export_mappings", "Export accumulated rename mappings to a file in the specified format",
 				optionalProps(
 						prop("format", "string", "Mapping format (e.g. 'TinyV1', 'SRG', 'Proguard'). Omit to list available formats"),
 						prop("outputPath", "string", "Absolute path to write the mapping file to"))));
+
+		// 11. switch_workspace
+		tools.add(toolDef("switch_workspace", "Switch to a previously opened workspace by its ID",
+				requiredProps(prop("workspaceId", "string", "The workspace ID returned by open_jar"))));
+
+		// 12. list_workspaces
+		tools.add(toolDef("list_workspaces", "List all currently registered workspaces with their IDs, paths, and class counts",
+				new JsonObject()));
+
+		// 13. edit_bytecode
+		tools.add(toolDef("edit_bytecode", "Edit bytecode: add/remove/modify methods and fields in a class",
+				editBytecodeSchema()));
+
+		// 14. diff_classes
+		tools.add(toolDef("diff_classes", "Compare two classes or a class against provided source code, producing a unified diff",
+				diffClassesSchema()));
+
+		// 15. export_jar
+		tools.add(toolDef("export_jar", "Export the current workspace as a JAR file (includes all modified classes)",
+				requiredProps(prop("outputPath", "string", "Absolute path to write the output JAR file"))));
+
+		// 16. export_source
+		tools.add(toolDef("export_source", "Export decompiled source code to a directory. Can export a single class or all classes.",
+				exportSourceSchema()));
 
 		JsonObject result = new JsonObject();
 		result.add("tools", tools);
@@ -125,20 +175,32 @@ public class RecafMcpServer {
 		JsonObject args = params.has("arguments") ? params.getAsJsonObject("arguments") : new JsonObject();
 
 		String text;
+		boolean isError = false;
 		try {
 			text = switch (name) {
 				case "open_jar" -> bridge.extractData(bridge.post("/workspace/open",
 						jsonBody("path", getString(args, "path"))));
-				case "close_workspace" -> bridge.extractData(bridge.post("/workspace/close", "{}"));
-				case "list_classes" -> {
-					String filter = getString(args, "filter");
-					String body = filter == null ? "{}" : jsonBody("filter", filter);
-					yield bridge.extractData(bridge.post("/workspace/classes", body));
+
+				case "close_workspace" -> {
+					JsonObject body = new JsonObject();
+					if (args.has("workspaceId")) body.addProperty("workspaceId", getString(args, "workspaceId"));
+					yield bridge.extractData(bridge.post("/workspace/close", GSON.toJson(body)));
 				}
+
+				case "list_classes" -> {
+					JsonObject body = new JsonObject();
+					if (args.has("filter")) body.addProperty("filter", getString(args, "filter"));
+					body.addProperty("offset", getIntOr(args, "offset", 0));
+					body.addProperty("limit", getIntOr(args, "limit", 500));
+					yield bridge.extractData(bridge.post("/workspace/classes", GSON.toJson(body)));
+				}
+
 				case "get_class_info" -> bridge.extractData(bridge.post("/workspace/class-info",
 						jsonBody("className", getString(args, "className"))));
+
 				case "decompile_class" -> bridge.extractData(bridge.post("/decompile",
 						jsonBody("className", getString(args, "className"))));
+
 				case "search_code" -> {
 					JsonObject body = new JsonObject();
 					body.addProperty("query", getString(args, "query"));
@@ -146,6 +208,7 @@ public class RecafMcpServer {
 					body.addProperty("maxResults", getIntOr(args, "maxResults", 100));
 					yield bridge.extractData(bridge.post("/search", GSON.toJson(body)));
 				}
+
 				case "get_call_graph" -> {
 					JsonObject body = new JsonObject();
 					body.addProperty("className", getString(args, "className"));
@@ -153,12 +216,14 @@ public class RecafMcpServer {
 					body.addProperty("depth", getIntOr(args, "depth", 3));
 					yield bridge.extractData(bridge.post("/analysis/call-graph", GSON.toJson(body)));
 				}
+
 				case "get_inheritance" -> {
 					JsonObject body = new JsonObject();
 					body.addProperty("className", getString(args, "className"));
 					body.addProperty("direction", getStringOr(args, "direction", "both"));
 					yield bridge.extractData(bridge.post("/analysis/inheritance", GSON.toJson(body)));
 				}
+
 				case "rename_symbol" -> {
 					JsonObject body = new JsonObject();
 					body.addProperty("type", getString(args, "type"));
@@ -168,16 +233,87 @@ public class RecafMcpServer {
 					if (args.has("descriptor")) body.addProperty("descriptor", getString(args, "descriptor"));
 					yield bridge.extractData(bridge.post("/mapping/rename", GSON.toJson(body)));
 				}
+
 				case "export_mappings" -> {
 					JsonObject body = new JsonObject();
 					if (args.has("format")) body.addProperty("format", getString(args, "format"));
 					if (args.has("outputPath")) body.addProperty("outputPath", getString(args, "outputPath"));
 					yield bridge.extractData(bridge.post("/mapping/export", GSON.toJson(body)));
 				}
+
+				case "switch_workspace" -> bridge.extractData(bridge.post("/workspace/switch",
+						jsonBody("workspaceId", getString(args, "workspaceId"))));
+
+				case "list_workspaces" -> bridge.extractData(bridge.get("/workspace/list-workspaces"));
+
+				case "edit_bytecode" -> {
+					String operation = getStringOr(args, "operation", "");
+					JsonObject body = new JsonObject();
+					body.addProperty("className", getString(args, "className"));
+					String endpoint = switch (operation) {
+						case "edit_method" -> {
+							body.addProperty("methodName", getString(args, "methodName"));
+							body.addProperty("methodDesc", getString(args, "methodDesc"));
+							if (args.has("accessFlags")) body.addProperty("accessFlags", args.get("accessFlags").getAsInt());
+							yield "/bytecode/edit-method";
+						}
+						case "edit_field" -> {
+							body.addProperty("fieldName", getString(args, "fieldName"));
+							if (args.has("descriptor")) body.addProperty("descriptor", getString(args, "descriptor"));
+							if (args.has("accessFlags")) body.addProperty("accessFlags", args.get("accessFlags").getAsInt());
+							yield "/bytecode/edit-field";
+						}
+						case "remove_member" -> {
+							body.addProperty("memberName", getString(args, "memberName"));
+							body.addProperty("memberType", getString(args, "memberType"));
+							if (args.has("descriptor")) body.addProperty("descriptor", getString(args, "descriptor"));
+							yield "/bytecode/remove-member";
+						}
+						case "add_field" -> {
+							body.addProperty("fieldName", getString(args, "fieldName"));
+							body.addProperty("descriptor", getString(args, "descriptor"));
+							if (args.has("accessFlags")) body.addProperty("accessFlags", args.get("accessFlags").getAsInt());
+							yield "/bytecode/add-field";
+						}
+						case "add_method" -> {
+							body.addProperty("methodName", getString(args, "methodName"));
+							body.addProperty("methodDesc", getString(args, "methodDesc"));
+							if (args.has("accessFlags")) body.addProperty("accessFlags", args.get("accessFlags").getAsInt());
+							yield "/bytecode/add-method";
+						}
+						default -> throw new IllegalArgumentException(
+								"Unknown operation: " + operation + ". Use: edit_method, edit_field, remove_member, add_field, add_method");
+					};
+					yield bridge.extractData(bridge.post(endpoint, GSON.toJson(body)));
+				}
+
+				case "diff_classes" -> {
+					JsonObject body = new JsonObject();
+					body.addProperty("className1", getString(args, "className1"));
+					if (args.has("className2")) body.addProperty("className2", getString(args, "className2"));
+					if (args.has("source")) body.addProperty("source", getString(args, "source"));
+					yield bridge.extractData(bridge.post("/diff", GSON.toJson(body)));
+				}
+
+				case "export_jar" -> bridge.extractData(bridge.post("/export/jar",
+						jsonBody("outputPath", getString(args, "outputPath"))));
+
+				case "export_source" -> {
+					JsonObject body = new JsonObject();
+					body.addProperty("outputDir", getString(args, "outputDir"));
+					if (args.has("className")) body.addProperty("className", getString(args, "className"));
+					yield bridge.extractData(bridge.post("/export/source", GSON.toJson(body)));
+				}
+
 				default -> "{\"error\":\"Unknown tool: " + name + "\"}";
 			};
 		} catch (Exception e) {
 			text = "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}";
+		}
+
+		// Detect error responses and set isError flag
+		if (text != null && text.contains("\"error\"")) {
+			isError = true;
 		}
 
 		// Build CallToolResult
@@ -188,7 +324,7 @@ public class RecafMcpServer {
 		textContent.addProperty("text", text);
 		content.add(textContent);
 		result.add("content", content);
-		result.addProperty("isError", false);
+		result.addProperty("isError", isError);
 
 		sendResult(id, result);
 	}
@@ -393,6 +529,59 @@ public class RecafMcpServer {
 		schema.add("properties", properties);
 		JsonArray required = new JsonArray();
 		required.add("type"); required.add("oldName"); required.add("newName");
+		schema.add("required", required);
+		return schema;
+	}
+
+	private static JsonObject editBytecodeSchema() {
+		JsonObject schema = new JsonObject();
+		JsonObject properties = new JsonObject();
+		properties.add("className", typedProp("string", "Fully qualified class name (e.g. 'com/example/Main')"));
+		JsonObject op = typedProp("string", "Operation: 'edit_method', 'edit_field', 'remove_member', 'add_field', 'add_method'");
+		JsonArray enumVals = new JsonArray();
+		enumVals.add("edit_method"); enumVals.add("edit_field"); enumVals.add("remove_member");
+		enumVals.add("add_field"); enumVals.add("add_method");
+		op.add("enum", enumVals);
+		properties.add("operation", op);
+		properties.add("methodName", typedProp("string", "Method name (for edit_method, add_method)"));
+		properties.add("methodDesc", typedProp("string", "Method descriptor e.g. '(I)V' (for edit_method, add_method)"));
+		properties.add("fieldName", typedProp("string", "Field name (for edit_field, add_field)"));
+		properties.add("descriptor", typedProp("string", "Field descriptor e.g. 'I' or 'Ljava/lang/String;' (for edit_field, add_field, remove_member)"));
+		properties.add("accessFlags", typedProp("integer", "Access flags as integer (e.g. 1=public, 2=private)"));
+		properties.add("memberName", typedProp("string", "Member name to remove (for remove_member)"));
+		JsonObject memberType = typedProp("string", "Member type to remove: 'method' or 'field' (for remove_member)");
+		JsonArray mtEnum = new JsonArray();
+		mtEnum.add("method"); mtEnum.add("field");
+		memberType.add("enum", mtEnum);
+		properties.add("memberType", memberType);
+		schema.add("properties", properties);
+		JsonArray required = new JsonArray();
+		required.add("className"); required.add("operation");
+		schema.add("required", required);
+		return schema;
+	}
+
+	private static JsonObject diffClassesSchema() {
+		JsonObject schema = new JsonObject();
+		JsonObject properties = new JsonObject();
+		properties.add("className1", typedProp("string", "First class to compare (will be decompiled)"));
+		properties.add("className2", typedProp("string", "Second class to compare (will be decompiled). Provide this OR 'source'."));
+		properties.add("source", typedProp("string", "Source code to compare against className1. Provide this OR 'className2'."));
+		schema.add("properties", properties);
+		JsonArray required = new JsonArray();
+		required.add("className1");
+		schema.add("required", required);
+		return schema;
+	}
+
+	private static JsonObject exportSourceSchema() {
+		JsonObject schema = new JsonObject();
+		JsonObject properties = new JsonObject();
+		properties.add("outputDir", typedProp("string", "Absolute path to the output directory for decompiled source files"));
+		properties.add("className", typedProp("string", "Optional: export only this class. If omitted, exports all classes."));
+		schema.add("properties", properties);
+		JsonArray required = new JsonArray();
+		required.add("outputDir");
 		schema.add("required", required);
 		return schema;
 	}

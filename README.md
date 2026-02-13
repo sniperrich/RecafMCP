@@ -1,10 +1,12 @@
 # Recaf MCP Plugin
 
+[![Version](https://img.shields.io/badge/version-1.1.0-brightgreen.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![JDK 22+](https://img.shields.io/badge/JDK-22%2B-orange.svg)](https://openjdk.org/)
 [![MCP Protocol](https://img.shields.io/badge/MCP-2024--11--05-green.svg)](https://modelcontextprotocol.io/)
+[![Tools](https://img.shields.io/badge/MCP_Tools-16-purple.svg)]()
 
-Enable AI assistants to control [Recaf 4.x](https://github.com/Col-E/Recaf) through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) — decompile, search, analyze, and rename Java bytecode directly from your AI workflow.
+Enable AI assistants to control [Recaf 4.x](https://github.com/Col-E/Recaf) through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) — decompile, search, analyze, edit bytecode, diff classes, and export Java bytecode directly from your AI workflow.
 
 [中文文档](README_CN.md)
 
@@ -29,20 +31,43 @@ The plugin uses a dual-process architecture to bridge AI assistants with Recaf's
 
 This separation is necessary because Recaf runs as a JavaFX desktop application with its own module system, while MCP requires a STDIO-based process that the AI client can spawn and manage.
 
-## Available MCP Tools
+## Available MCP Tools (16)
+
+### Workspace Management
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `open_jar` | Open a JAR, APK, or class file for analysis | `path` — absolute file path |
-| `close_workspace` | Close the currently open workspace | — |
-| `list_classes` | List all classes in the workspace | `filter` (optional) — name filter, e.g. `com/example` or `Main` |
-| `get_class_info` | Get class details: fields, methods, interfaces, annotations | `className` — e.g. `com/example/Main` |
-| `decompile_class` | Decompile a class to Java source code | `className` — e.g. `com/example/Main` |
-| `search_code` | Search for strings, class/method/field references, or declarations | `query`, `type` (`string`/`class`/`method`/`field`/`declaration`), `maxResults` |
-| `get_call_graph` | Get method call graph (callers and callees) | `className`, `methodName` (optional), `depth` (default: 3) |
-| `get_inheritance` | Get inheritance hierarchy (parents/children) | `className`, `direction` (`both`/`parents`/`children`) |
-| `rename_symbol` | Rename a class, field, or method (updates all references) | `type` (`class`/`field`/`method`), `oldName`, `newName`, `className` (for field/method), `descriptor` (optional) |
-| `export_mappings` | Export rename mappings to a file | `format` (`TinyV1`/`SRG`/`Proguard`/...), `outputPath` |
+| `open_jar` | Open a JAR, APK, or class file for analysis | `path` — absolute file path. Returns `workspaceId`. |
+| `close_workspace` | Close the current or a specific workspace | `workspaceId` (optional) — close by ID |
+| `switch_workspace` | Switch to a previously opened workspace | `workspaceId` — ID returned by `open_jar` |
+| `list_workspaces` | List all registered workspaces | — |
+| `list_classes` | List classes with offset/limit pagination | `filter`, `offset`, `limit` |
+| `get_class_info` | Get class details: fields, methods, interfaces | `className` |
+
+### Analysis
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `decompile_class` | Decompile a class to Java source code | `className` |
+| `search_code` | Search strings, references, or declarations | `query`, `type`, `maxResults` |
+| `get_call_graph` | Get method call graph (callers and callees) | `className`, `methodName`, `depth` |
+| `get_inheritance` | Get inheritance hierarchy (parents/children) | `className`, `direction` |
+| `diff_classes` | Compare two classes or class vs. source code | `className1`, `className2` or `source` |
+
+### Modification
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `rename_symbol` | Rename class/field/method (updates all refs) | `type`, `oldName`, `newName`, `className` |
+| `edit_bytecode` | Add/remove/modify methods and fields | `className`, `operation`, + operation-specific params |
+
+### Export
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `export_mappings` | Export rename mappings to a file | `format`, `outputPath` |
+| `export_jar` | Export workspace as a JAR file | `outputPath` |
+| `export_source` | Export decompiled source to a directory | `outputDir`, `className` (optional) |
 
 ## MCP Resources
 
@@ -68,8 +93,8 @@ This produces two JARs:
 
 | File | Purpose |
 |------|---------|
-| `build/libs/recaf-mcp-plugin-1.0.0.jar` | Recaf plugin (loads inside Recaf, runs the Bridge Server) |
-| `build/mcp/recaf-mcp-server-1.0.0.jar` | MCP Server (standalone fat JAR, launched by AI client) |
+| `build/libs/recaf-mcp-plugin-1.1.0.jar` | Recaf plugin (loads inside Recaf, runs the Bridge Server) |
+| `build/mcp/recaf-mcp-server-1.1.0.jar` | MCP Server (standalone fat JAR, launched by AI client) |
 
 ## Setup & Usage
 
@@ -85,7 +110,7 @@ This builds the plugin and launches Recaf with it auto-loaded.
 
 **Option B: Manual installation**
 
-Copy `build/libs/recaf-mcp-plugin-1.0.0.jar` to Recaf's plugin directory:
+Copy `build/libs/recaf-mcp-plugin-1.1.0.jar` to Recaf's plugin directory:
 
 | OS | Plugin Directory |
 |----|-----------------|
@@ -114,7 +139,7 @@ Add to `~/.claude.json`:
   "mcpServers": {
     "recaf": {
       "command": "java",
-      "args": ["-jar", "/absolute/path/to/build/mcp/recaf-mcp-server-1.0.0.jar"]
+      "args": ["-jar", "/absolute/path/to/build/mcp/recaf-mcp-server-1.1.0.jar"]
     }
   }
 }
@@ -131,7 +156,7 @@ Add to your MCP configuration (Settings → MCP):
   "mcpServers": {
     "recaf": {
       "command": "java",
-      "args": ["-jar", "/absolute/path/to/build/mcp/recaf-mcp-server-1.0.0.jar"]
+      "args": ["-jar", "/absolute/path/to/build/mcp/recaf-mcp-server-1.1.0.jar"]
     }
   }
 }
@@ -151,7 +176,10 @@ Decompile the com/example/Main class
 Search for all strings containing "password"
 Show me the call graph for com/example/Main
 Rename com/example/a to com/example/LoginManager
-Export the mappings as TinyV1 to /tmp/mappings.tiny
+Compare com/example/A with com/example/B
+Remove the method "unused" from com/example/Foo
+Export the modified JAR to /tmp/output.jar
+Export all decompiled source to /tmp/src
 ```
 
 ## Example Workflows
@@ -166,15 +194,28 @@ Export the mappings as TinyV1 to /tmp/mappings.tiny
 5. "Get the call graph for com/a/b/c method d" — understand control flow
 6. "Rename com/a/b/c to com/app/NetworkManager" — give it a meaningful name
 7. "Export mappings as TinyV1 to ./mappings.tiny" — save your work
+8. "Export the modified JAR to ./cleaned.jar" — save the result
 ```
 
-### Analyzing Library Dependencies
+### Multi-JAR Comparison
 
 ```
-1. "Open /path/to/library.jar"
-2. "Search for class references to javax/crypto" — find crypto usage
-3. "Get inheritance of com/lib/BaseHandler" — see the class hierarchy
-4. "Decompile com/lib/impl/SecureHandler" — inspect implementation details
+1. "Open /path/to/v1.jar" — opens first JAR, returns workspaceId
+2. "Open /path/to/v2.jar" — opens second JAR, returns workspaceId
+3. "List workspaces" — see both workspaces
+4. "Switch to workspace v1-1" — switch to first JAR
+5. "Decompile com/example/Main" — get v1 source
+6. "Switch to workspace v2-2" — switch to second JAR
+7. "Diff com/example/Main against the v1 source" — compare versions
+```
+
+### Bytecode Editing
+
+```
+1. "Open /path/to/target.jar"
+2. "Remove the method 'checkLicense' from com/app/Main"
+3. "Add a public field 'debug' of type boolean to com/app/Config"
+4. "Export the modified JAR to /tmp/patched.jar"
 ```
 
 ## Project Structure
@@ -184,17 +225,23 @@ src/main/java/dev/recaf/mcp/
 ├── RecafMcpPlugin.java                  # Plugin entry point — CDI injection of Recaf services
 ├── bridge/
 │   ├── BridgeServer.java                # HTTP server on :9847 — routes requests to handlers
+│   ├── WorkspaceRegistry.java           # Multi-workspace registry — ID → Workspace mapping
 │   └── handlers/
-│       ├── WorkspaceHandler.java        # /workspace/* — open, close, list classes, class info
+│       ├── WorkspaceHandler.java        # /workspace/* — open, close, switch, list, classes, info
 │       ├── DecompileHandler.java        # /decompile — decompile class to Java source
 │       ├── SearchHandler.java           # /search — string, class, method, field, declaration search
 │       ├── AnalysisHandler.java         # /analysis/* — call graph & inheritance hierarchy
-│       └── MappingHandler.java          # /mapping/* — rename symbols & export mappings
+│       ├── MappingHandler.java          # /mapping/* — rename symbols & export mappings
+│       ├── BytecodeHandler.java         # /bytecode/* — edit/add/remove methods & fields
+│       ├── DiffHandler.java             # /diff — compare two classes (unified diff)
+│       └── ExportHandler.java           # /export/* — export JAR & decompiled source
 ├── server/
-│   ├── RecafMcpServer.java              # MCP Server — STDIO JSON-RPC, tool/resource dispatch
+│   ├── RecafMcpServer.java              # MCP Server — STDIO JSON-RPC, 16 tools dispatch
 │   └── BridgeClient.java               # HTTP client — forwards MCP tool calls to Bridge Server
 └── util/
-    └── JsonUtil.java                    # JSON response helpers
+    ├── JsonUtil.java                    # JSON response helpers
+    ├── ErrorMapper.java                 # Structured error codes, messages & suggestions
+    └── DiffUtil.java                    # LCS-based unified diff algorithm
 ```
 
 ## Bridge HTTP API Reference
@@ -204,17 +251,27 @@ All endpoints accept POST with JSON body and return JSON responses.
 | Endpoint | Description |
 |----------|-------------|
 | `GET /health` | Health check — returns `{"status":"ok"}` |
-| `POST /workspace/open` | Open a file: `{"path": "/path/to/file.jar"}` |
-| `POST /workspace/close` | Close workspace: `{}` |
+| `POST /workspace/open` | Open a file: `{"path": "/path/to/file.jar"}` → returns `workspaceId` |
+| `POST /workspace/close` | Close workspace: `{"workspaceId": "optional"}` |
 | `GET /workspace/info` | Get workspace info |
-| `POST /workspace/classes` | List classes: `{"filter": "optional"}` |
+| `POST /workspace/classes` | List classes: `{"filter": "opt", "offset": 0, "limit": 500}` |
 | `POST /workspace/class-info` | Class details: `{"className": "com/example/Main"}` |
+| `POST /workspace/switch` | Switch workspace: `{"workspaceId": "xxx"}` |
+| `GET /workspace/list-workspaces` | List all registered workspaces |
 | `POST /decompile` | Decompile: `{"className": "com/example/Main"}` |
 | `POST /search` | Search: `{"query": "text", "type": "string", "maxResults": 100}` |
 | `POST /analysis/call-graph` | Call graph: `{"className": "...", "methodName": "...", "depth": 3}` |
 | `POST /analysis/inheritance` | Inheritance: `{"className": "...", "direction": "both"}` |
 | `POST /mapping/rename` | Rename: `{"type": "class", "oldName": "...", "newName": "..."}` |
-| `POST /mapping/export` | Export: `{"format": "TinyV1", "outputPath": "/path/to/output"}` |
+| `POST /mapping/export` | Export mappings: `{"format": "TinyV1", "outputPath": "/path"}` |
+| `POST /bytecode/edit-method` | Edit method: `{"className": "...", "methodName": "...", "methodDesc": "...", "accessFlags": 1}` |
+| `POST /bytecode/edit-field` | Edit field: `{"className": "...", "fieldName": "...", "accessFlags": 2}` |
+| `POST /bytecode/remove-member` | Remove member: `{"className": "...", "memberName": "...", "memberType": "method"}` |
+| `POST /bytecode/add-field` | Add field: `{"className": "...", "fieldName": "...", "descriptor": "I"}` |
+| `POST /bytecode/add-method` | Add method: `{"className": "...", "methodName": "...", "methodDesc": "()V"}` |
+| `POST /diff` | Diff classes: `{"className1": "A", "className2": "B"}` or `{"className1": "A", "source": "..."}` |
+| `POST /export/jar` | Export JAR: `{"outputPath": "/path/to/output.jar"}` |
+| `POST /export/source` | Export source: `{"outputDir": "/path/to/src", "className": "optional"}` |
 
 ## Technical Details
 
@@ -225,8 +282,10 @@ All endpoints accept POST with JSON body and return JSON responses.
 | MCP Server Dependencies | Gson only (no MCP SDK — lightweight custom JSON-RPC implementation) |
 | Decompile Timeout | 30 seconds |
 | Default Max Search Results | 100 |
+| Default Class List Limit | 500 (with offset pagination) |
 | Java Toolchain | JDK 22+ |
 | Build System | Gradle with Shadow plugin for fat JAR |
+| Total MCP Tools | 16 |
 
 ## Troubleshooting
 
@@ -235,7 +294,7 @@ All endpoints accept POST with JSON body and return JSON responses.
 - Check Recaf's Logging panel for the startup banner.
 
 **MCP tools not appearing in AI client**
-- Verify the path to `recaf-mcp-server-1.0.0.jar` is correct and absolute.
+- Verify the path to `recaf-mcp-server-1.1.0.jar` is correct and absolute.
 - Make sure `java` points to JDK 22+: run `java -version` to check.
 - Restart your AI client after updating the MCP configuration.
 
@@ -243,9 +302,30 @@ All endpoints accept POST with JSON body and return JSON responses.
 - Ensure a workspace is open (use `open_jar` first).
 - Check the class name format: use `/` separators (e.g. `com/example/Main`), not `.` separators.
 
+**Structured error responses**
+- All errors now include `code`, `message`, and `suggestion` fields.
+- Common codes: `NO_WORKSPACE`, `CLASS_NOT_FOUND`, `MEMBER_NOT_FOUND`, `INVALID_PARAMS`, `DECOMPILE_TIMEOUT`.
+
 **Build fails**
 - Ensure JDK 22+ is installed. Run `./gradlew -q javaToolchains` to see detected JDKs.
 - If using a non-default JDK, configure a [Gradle toolchain](https://docs.gradle.org/current/userguide/toolchains.html).
+
+## Changelog
+
+### v1.1.0
+
+- **Multi-workspace support** — open multiple JARs simultaneously, switch between them with `switch_workspace` and `list_workspaces`
+- **Bytecode editing** — `edit_bytecode` tool with 5 operations: edit_method, edit_field, remove_member, add_field, add_method (ASM-based)
+- **Class diff** — `diff_classes` tool produces unified diff between two decompiled classes or class vs. provided source
+- **Export** — `export_jar` exports the workspace (with modifications) as a JAR; `export_source` exports decompiled source to a directory
+- **Pagination** — `list_classes` now supports `offset`/`limit` with `totalMatched`/`hasMore` metadata
+- **Structured errors** — all errors return `code`, `message`, and `suggestion` fields (e.g. `NO_WORKSPACE`, `CLASS_NOT_FOUND`)
+- **Error detection** — MCP Server now sets `isError: true` on error responses for better AI client handling
+- Tool count: 10 → 16
+
+### v1.0.0
+
+- Initial release with 10 MCP tools: open_jar, close_workspace, list_classes, get_class_info, decompile_class, search_code, get_call_graph, get_inheritance, rename_symbol, export_mappings
 
 ## License
 
