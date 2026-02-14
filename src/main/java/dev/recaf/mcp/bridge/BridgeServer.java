@@ -8,7 +8,9 @@ import dev.recaf.mcp.util.ErrorMapper;
 import dev.recaf.mcp.util.JsonUtil;
 import org.slf4j.Logger;
 import software.coley.recaf.analytics.logging.Logging;
+import software.coley.recaf.services.assembler.AssemblerPipelineManager;
 import software.coley.recaf.services.callgraph.CallGraphService;
+import software.coley.recaf.services.compile.JavacCompiler;
 import software.coley.recaf.services.decompile.DecompilerManager;
 import software.coley.recaf.services.inheritance.InheritanceGraphService;
 import software.coley.recaf.services.mapping.MappingApplierService;
@@ -18,6 +20,8 @@ import software.coley.recaf.services.search.SearchService;
 import software.coley.recaf.services.search.match.StringPredicateProvider;
 import software.coley.recaf.services.workspace.WorkspaceManager;
 import software.coley.recaf.services.workspace.io.ResourceImporter;
+import software.coley.recaf.services.workspace.patch.PatchApplier;
+import software.coley.recaf.services.workspace.patch.PatchProvider;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -47,6 +51,10 @@ public class BridgeServer {
 	private final MappingApplierService mappingApplierService;
 	private final MappingFormatManager mappingFormatManager;
 	private final AggregateMappingManager aggregateMappingManager;
+	private final AssemblerPipelineManager assemblerPipelineManager;
+	private final JavacCompiler javacCompiler;
+	private final PatchProvider patchProvider;
+	private final PatchApplier patchApplier;
 
 	// Multi-workspace registry
 	private final WorkspaceRegistry workspaceRegistry = new WorkspaceRegistry();
@@ -60,11 +68,16 @@ public class BridgeServer {
 						InheritanceGraphService inheritanceGraphService,
 						MappingApplierService mappingApplierService,
 						MappingFormatManager mappingFormatManager,
-						AggregateMappingManager aggregateMappingManager) {
+						AggregateMappingManager aggregateMappingManager,
+						AssemblerPipelineManager assemblerPipelineManager,
+						JavacCompiler javacCompiler,
+						PatchProvider patchProvider,
+						PatchApplier patchApplier) {
 		this(DEFAULT_PORT, workspaceManager, resourceImporter, decompilerManager,
 				searchService, stringPredicateProvider, callGraphService,
 				inheritanceGraphService, mappingApplierService, mappingFormatManager,
-				aggregateMappingManager);
+				aggregateMappingManager, assemblerPipelineManager, javacCompiler,
+				patchProvider, patchApplier);
 	}
 
 	public BridgeServer(int port,
@@ -77,7 +90,11 @@ public class BridgeServer {
 						InheritanceGraphService inheritanceGraphService,
 						MappingApplierService mappingApplierService,
 						MappingFormatManager mappingFormatManager,
-						AggregateMappingManager aggregateMappingManager) {
+						AggregateMappingManager aggregateMappingManager,
+						AssemblerPipelineManager assemblerPipelineManager,
+						JavacCompiler javacCompiler,
+						PatchProvider patchProvider,
+						PatchApplier patchApplier) {
 		this.port = port;
 		this.workspaceManager = workspaceManager;
 		this.resourceImporter = resourceImporter;
@@ -89,6 +106,10 @@ public class BridgeServer {
 		this.mappingApplierService = mappingApplierService;
 		this.mappingFormatManager = mappingFormatManager;
 		this.aggregateMappingManager = aggregateMappingManager;
+		this.assemblerPipelineManager = assemblerPipelineManager;
+		this.javacCompiler = javacCompiler;
+		this.patchProvider = patchProvider;
+		this.patchApplier = patchApplier;
 	}
 
 	public void start() throws IOException {
@@ -145,6 +166,28 @@ public class BridgeServer {
 		ExportHandler exportHandler = new ExportHandler(workspaceManager, decompilerManager);
 		server.createContext("/export/jar", wrapHandler(exportHandler::handleExportJar));
 		server.createContext("/export/source", wrapHandler(exportHandler::handleExportSource));
+
+		// Assembler endpoints
+		AssemblerHandler assemblerHandler = new AssemblerHandler(workspaceManager, assemblerPipelineManager);
+		server.createContext("/disassemble", wrapHandler(assemblerHandler::handleDisassemble));
+		server.createContext("/disassemble/method", wrapHandler(assemblerHandler::handleMethodDisassemble));
+		server.createContext("/assemble", wrapHandler(assemblerHandler::handleAssemble));
+
+		// Compile endpoint
+		CompileHandler compileHandler = new CompileHandler(workspaceManager, javacCompiler);
+		server.createContext("/compile", wrapHandler(compileHandler::handle));
+
+		// Patch endpoint
+		PatchHandler patchHandler = new PatchHandler(workspaceManager, patchProvider, patchApplier);
+		server.createContext("/patch", wrapHandler(patchHandler::handle));
+
+		// Additional workspace endpoints (outline, read-file, delete-class)
+		server.createContext("/workspace/outline", wrapHandler(wsHandler::handleOutline));
+		server.createContext("/workspace/read-file", wrapHandler(wsHandler::handleReadFile));
+		server.createContext("/workspace/delete-class", wrapHandler(wsHandler::handleDeleteClass));
+
+		// Method bytecode instructions endpoint
+		server.createContext("/bytecode/instructions", wrapHandler(bytecodeHandler::handleMethodBytecode));
 
 		server.start();
 		logger.info("MCP Bridge Server started on port {}", port);

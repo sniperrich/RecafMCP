@@ -12,19 +12,23 @@ import software.coley.recaf.services.callgraph.CallGraphService;
 import software.coley.recaf.services.decompile.DecompilerManager;
 import software.coley.recaf.services.inheritance.InheritanceGraphService;
 import software.coley.recaf.services.mapping.MappingApplierService;
+import software.coley.recaf.services.assembler.AssemblerPipelineManager;
+import software.coley.recaf.services.compile.JavacCompiler;
 import software.coley.recaf.services.mapping.aggregate.AggregateMappingManager;
 import software.coley.recaf.services.mapping.format.MappingFormatManager;
 import software.coley.recaf.services.search.SearchService;
 import software.coley.recaf.services.search.match.StringPredicateProvider;
 import software.coley.recaf.services.workspace.WorkspaceManager;
 import software.coley.recaf.services.workspace.io.ResourceImporter;
+import software.coley.recaf.services.workspace.patch.PatchApplier;
+import software.coley.recaf.services.workspace.patch.PatchProvider;
 
 /**
  * Recaf MCP Plugin - Exposes Recaf services via an HTTP bridge server
  * so that an external MCP Server process can relay AI tool calls to Recaf.
  */
 @Dependent
-@PluginInformation(id = "dev.recaf.mcp.recaf-mcp-plugin", version = "1.1.0", name = "Recaf MCP Plugin", description = "MCP bridge plugin that exposes Recaf services to AI assistants via the Model Context Protocol")
+@PluginInformation(id = "dev.recaf.mcp.recaf-mcp-plugin", version = "1.2.0", name = "Recaf MCP Plugin", description = "MCP bridge plugin that exposes Recaf services to AI assistants via the Model Context Protocol")
 public class RecafMcpPlugin implements Plugin {
 	private static final Logger logger = Logging.get(RecafMcpPlugin.class);
 
@@ -40,12 +44,17 @@ public class RecafMcpPlugin implements Plugin {
 						  InheritanceGraphService inheritanceGraphService,
 						  MappingApplierService mappingApplierService,
 						  MappingFormatManager mappingFormatManager,
-						  AggregateMappingManager aggregateMappingManager) {
+						  AggregateMappingManager aggregateMappingManager,
+						  AssemblerPipelineManager assemblerPipelineManager,
+						  JavacCompiler javacCompiler,
+						  PatchProvider patchProvider,
+						  PatchApplier patchApplier) {
 		this.bridgeServer = new BridgeServer(
 				workspaceManager, resourceImporter, decompilerManager,
 				searchService, stringPredicateProvider, callGraphService,
 				inheritanceGraphService, mappingApplierService, mappingFormatManager,
-				aggregateMappingManager
+				aggregateMappingManager, assemblerPipelineManager, javacCompiler,
+				patchProvider, patchApplier
 		);
 	}
 

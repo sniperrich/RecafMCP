@@ -6,6 +6,8 @@ import dev.recaf.mcp.bridge.BridgeServer;
 import dev.recaf.mcp.util.ErrorMapper;
 import dev.recaf.mcp.util.JsonUtil;
 import org.objectweb.asm.*;
+import org.objectweb.asm.tree.*;
+import org.objectweb.asm.util.Printer;
 import org.slf4j.Logger;
 import software.coley.recaf.analytics.logging.Logging;
 import software.coley.recaf.info.JvmClassInfo;
@@ -16,6 +18,8 @@ import software.coley.recaf.workspace.model.Workspace;
 import software.coley.recaf.workspace.model.bundle.JvmClassBundle;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Handles bytecode editing operations: edit/add/remove methods and fields.
@@ -414,6 +418,242 @@ public class BytecodeHandler {
 			logger.error("Add method failed for {}.{}{}", className, methodName, methodDesc, e);
 			BridgeServer.sendJson(exchange, 500, ErrorMapper.mapException("Add method", e));
 		}
+	}
+
+	/**
+	 * POST /bytecode/instructions
+	 * { "className": "com/example/Foo", "methodName": "bar", "methodDesc": "(I)V" }
+	 * Returns detailed bytecode instructions for a method using ASM tree API.
+	 */
+	public void handleMethodBytecode(HttpExchange exchange) throws IOException {
+		Workspace workspace = workspaceManager.getCurrent();
+		if (workspace == null) {
+			BridgeServer.sendJson(exchange, 200, ErrorMapper.noWorkspace());
+			return;
+		}
+
+		String body = BridgeServer.readBody(exchange);
+		JsonObject req = JsonUtil.parseObject(body);
+		String className = JsonUtil.getString(req, "className", null);
+		String methodName = JsonUtil.getString(req, "methodName", null);
+		String methodDesc = JsonUtil.getString(req, "methodDesc", null);
+
+		if (className == null || methodName == null || methodDesc == null) {
+			BridgeServer.sendJson(exchange, 400, ErrorMapper.missingParam("className", "methodName", "methodDesc"));
+			return;
+		}
+
+		String normalizedName = className.replace('.', '/');
+		ClassPathNode classPath = workspace.findJvmClass(normalizedName);
+		if (classPath == null) {
+			BridgeServer.sendJson(exchange, 404, ErrorMapper.classNotFound(className));
+			return;
+		}
+
+		try {
+			JvmClassInfo classInfo = classPath.getValue().asJvmClass();
+			byte[] bytecode = classInfo.getBytecode();
+
+			ClassReader reader = new ClassReader(bytecode);
+			ClassNode classNode = new ClassNode();
+			reader.accept(classNode, 0);
+
+			// Find the target method
+			MethodNode targetMethod = null;
+			for (MethodNode mn : classNode.methods) {
+				if (mn.name.equals(methodName) && mn.desc.equals(methodDesc)) {
+					targetMethod = mn;
+					break;
+				}
+			}
+
+			if (targetMethod == null) {
+				BridgeServer.sendJson(exchange, 404, ErrorMapper.memberNotFound(className, methodName + methodDesc));
+				return;
+			}
+
+			JsonObject data = new JsonObject();
+			data.addProperty("className", normalizedName);
+			data.addProperty("methodName", methodName);
+			data.addProperty("methodDesc", methodDesc);
+			data.addProperty("access", targetMethod.access);
+			data.addProperty("maxStack", targetMethod.maxStack);
+			data.addProperty("maxLocals", targetMethod.maxLocals);
+
+			// Format instructions
+			List<JsonObject> instructions = new ArrayList<>();
+			if (targetMethod.instructions != null) {
+				for (AbstractInsnNode insn : targetMethod.instructions) {
+					JsonObject insnObj = formatInstruction(insn);
+					if (insnObj != null) {
+						instructions.add(insnObj);
+					}
+				}
+			}
+			data.add("instructions", JsonUtil.gson().toJsonTree(instructions));
+
+			// Try-catch blocks
+			List<JsonObject> tryCatchBlocks = new ArrayList<>();
+			if (targetMethod.tryCatchBlocks != null) {
+				for (TryCatchBlockNode tcb : targetMethod.tryCatchBlocks) {
+					JsonObject tcbObj = new JsonObject();
+					tcbObj.addProperty("start", labelIndex(targetMethod, tcb.start));
+					tcbObj.addProperty("end", labelIndex(targetMethod, tcb.end));
+					tcbObj.addProperty("handler", labelIndex(targetMethod, tcb.handler));
+					tcbObj.addProperty("type", tcb.type != null ? tcb.type : "any");
+					tryCatchBlocks.add(tcbObj);
+				}
+			}
+			data.add("tryCatchBlocks", JsonUtil.gson().toJsonTree(tryCatchBlocks));
+
+			// Local variables
+			List<JsonObject> localVariables = new ArrayList<>();
+			if (targetMethod.localVariables != null) {
+				for (LocalVariableNode lv : targetMethod.localVariables) {
+					JsonObject lvObj = new JsonObject();
+					lvObj.addProperty("name", lv.name);
+					lvObj.addProperty("desc", lv.desc);
+					lvObj.addProperty("index", lv.index);
+					localVariables.add(lvObj);
+				}
+			}
+			data.add("localVariables", JsonUtil.gson().toJsonTree(localVariables));
+
+			BridgeServer.sendJson(exchange, 200, JsonUtil.successResponse(data));
+			logger.info("[MCP] Method bytecode {}.{}{}: {} instructions", normalizedName, methodName, methodDesc, instructions.size());
+		} catch (Exception e) {
+			logger.error("Method bytecode failed for {}.{}{}", className, methodName, methodDesc, e);
+			BridgeServer.sendJson(exchange, 500, ErrorMapper.mapException("Method bytecode", e));
+		}
+	}
+
+	private JsonObject formatInstruction(AbstractInsnNode insn) {
+		int opcode = insn.getOpcode();
+		JsonObject obj = new JsonObject();
+
+		switch (insn.getType()) {
+			case AbstractInsnNode.LABEL -> {
+				// Skip labels as standalone entries, they're referenced by jumps
+				return null;
+			}
+			case AbstractInsnNode.FRAME -> {
+				// Skip frame entries
+				return null;
+			}
+			case AbstractInsnNode.LINE -> {
+				LineNumberNode ln = (LineNumberNode) insn;
+				obj.addProperty("type", "LINE");
+				obj.addProperty("line", ln.line);
+				return obj;
+			}
+			case AbstractInsnNode.INSN -> {
+				obj.addProperty("type", "INSN");
+				obj.addProperty("opcode", opcodeName(opcode));
+			}
+			case AbstractInsnNode.INT_INSN -> {
+				IntInsnNode iin = (IntInsnNode) insn;
+				obj.addProperty("type", "INT");
+				obj.addProperty("opcode", opcodeName(opcode));
+				obj.addProperty("operand", iin.operand);
+			}
+			case AbstractInsnNode.VAR_INSN -> {
+				VarInsnNode vin = (VarInsnNode) insn;
+				obj.addProperty("type", "VAR");
+				obj.addProperty("opcode", opcodeName(opcode));
+				obj.addProperty("var", vin.var);
+			}
+			case AbstractInsnNode.TYPE_INSN -> {
+				TypeInsnNode tin = (TypeInsnNode) insn;
+				obj.addProperty("type", "TYPE");
+				obj.addProperty("opcode", opcodeName(opcode));
+				obj.addProperty("desc", tin.desc);
+			}
+			case AbstractInsnNode.FIELD_INSN -> {
+				FieldInsnNode fin = (FieldInsnNode) insn;
+				obj.addProperty("type", "FIELD");
+				obj.addProperty("opcode", opcodeName(opcode));
+				obj.addProperty("owner", fin.owner);
+				obj.addProperty("name", fin.name);
+				obj.addProperty("desc", fin.desc);
+			}
+			case AbstractInsnNode.METHOD_INSN -> {
+				MethodInsnNode min = (MethodInsnNode) insn;
+				obj.addProperty("type", "METHOD");
+				obj.addProperty("opcode", opcodeName(opcode));
+				obj.addProperty("owner", min.owner);
+				obj.addProperty("name", min.name);
+				obj.addProperty("desc", min.desc);
+			}
+			case AbstractInsnNode.INVOKE_DYNAMIC_INSN -> {
+				InvokeDynamicInsnNode idin = (InvokeDynamicInsnNode) insn;
+				obj.addProperty("type", "INVOKEDYNAMIC");
+				obj.addProperty("opcode", "INVOKEDYNAMIC");
+				obj.addProperty("name", idin.name);
+				obj.addProperty("desc", idin.desc);
+				obj.addProperty("bsm", idin.bsm.getOwner() + "." + idin.bsm.getName());
+			}
+			case AbstractInsnNode.JUMP_INSN -> {
+				JumpInsnNode jin = (JumpInsnNode) insn;
+				obj.addProperty("type", "JUMP");
+				obj.addProperty("opcode", opcodeName(opcode));
+				obj.addProperty("target", "L" + System.identityHashCode(jin.label));
+			}
+			case AbstractInsnNode.LDC_INSN -> {
+				LdcInsnNode ldc = (LdcInsnNode) insn;
+				obj.addProperty("type", "LDC");
+				obj.addProperty("opcode", "LDC");
+				obj.addProperty("value", String.valueOf(ldc.cst));
+				obj.addProperty("valueType", ldc.cst.getClass().getSimpleName());
+			}
+			case AbstractInsnNode.IINC_INSN -> {
+				IincInsnNode iinc = (IincInsnNode) insn;
+				obj.addProperty("type", "IINC");
+				obj.addProperty("opcode", "IINC");
+				obj.addProperty("var", iinc.var);
+				obj.addProperty("incr", iinc.incr);
+			}
+			case AbstractInsnNode.TABLESWITCH_INSN -> {
+				TableSwitchInsnNode tsin = (TableSwitchInsnNode) insn;
+				obj.addProperty("type", "TABLESWITCH");
+				obj.addProperty("opcode", "TABLESWITCH");
+				obj.addProperty("min", tsin.min);
+				obj.addProperty("max", tsin.max);
+			}
+			case AbstractInsnNode.LOOKUPSWITCH_INSN -> {
+				LookupSwitchInsnNode lsin = (LookupSwitchInsnNode) insn;
+				obj.addProperty("type", "LOOKUPSWITCH");
+				obj.addProperty("opcode", "LOOKUPSWITCH");
+				obj.addProperty("keys", lsin.keys.toString());
+			}
+			case AbstractInsnNode.MULTIANEWARRAY_INSN -> {
+				MultiANewArrayInsnNode manain = (MultiANewArrayInsnNode) insn;
+				obj.addProperty("type", "MULTIANEWARRAY");
+				obj.addProperty("opcode", "MULTIANEWARRAY");
+				obj.addProperty("desc", manain.desc);
+				obj.addProperty("dims", manain.dims);
+			}
+			default -> {
+				if (opcode >= 0) {
+					obj.addProperty("type", "OTHER");
+					obj.addProperty("opcode", opcodeName(opcode));
+				} else {
+					return null;
+				}
+			}
+		}
+		return obj;
+	}
+
+	private String opcodeName(int opcode) {
+		if (opcode >= 0 && opcode < Printer.OPCODES.length) {
+			return Printer.OPCODES[opcode];
+		}
+		return "UNKNOWN_" + opcode;
+	}
+
+	private int labelIndex(MethodNode method, LabelNode label) {
+		if (method.instructions == null) return -1;
+		return method.instructions.indexOf(label);
 	}
 
 	/**

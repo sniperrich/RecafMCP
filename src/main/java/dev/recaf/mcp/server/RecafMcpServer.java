@@ -11,8 +11,8 @@ import java.util.*;
  * Implements the MCP JSON-RPC protocol over STDIO directly (no SDK dependency).
  * Relays tool calls to the Recaf Bridge Server via HTTP.
  *
- * Supports 16 tools: workspace management, decompilation, search, analysis,
- * mapping, bytecode editing, class diff, and export.
+ * Supports 25 tools: workspace management, decompilation, search, analysis,
+ * mapping, bytecode editing, class diff, export, compilation, assembly, and patches.
  */
 public class RecafMcpServer {
 
@@ -85,13 +85,13 @@ public class RecafMcpServer {
 
 		JsonObject serverInfo = new JsonObject();
 		serverInfo.addProperty("name", "recaf-mcp");
-		serverInfo.addProperty("version", "1.1.0");
+		serverInfo.addProperty("version", "1.2.0");
 		result.add("serverInfo", serverInfo);
 
 		return result;
 	}
 
-	// ==================== Tools (16 total) ====================
+	// ==================== Tools (25 total) ====================
 
 	private JsonObject buildToolsList() {
 		JsonArray tools = new JsonArray();
@@ -164,6 +164,42 @@ public class RecafMcpServer {
 		// 16. export_source
 		tools.add(toolDef("export_source", "Export decompiled source code to a directory. Can export a single class or all classes.",
 				exportSourceSchema()));
+
+		// 17. compile_java
+		tools.add(toolDef("compile_java", "Compile Java source code and apply the compiled class to the workspace",
+				compileJavaSchema()));
+
+		// 18. disassemble_class
+		tools.add(toolDef("disassemble_class", "Disassemble a class into JASM assembly text representation",
+				disassembleClassSchema()));
+
+		// 19. assemble_class
+		tools.add(toolDef("assemble_class", "Assemble JASM source text and apply the resulting class to the workspace",
+				assembleClassSchema()));
+
+		// 20. method_disassemble
+		tools.add(toolDef("method_disassemble", "Disassemble a single method into JASM assembly text",
+				methodDisassembleSchema()));
+
+		// 21. method_bytecode
+		tools.add(toolDef("method_bytecode", "View detailed bytecode instructions for a method including opcodes, operands, try-catch blocks, and local variables",
+				methodBytecodeSchema()));
+
+		// 22. class_outline
+		tools.add(toolDef("class_outline", "Get a lightweight class structure outline (fields, methods, access flags) without decompiling code",
+				requiredProps(prop("className", "string", "Fully qualified class name (e.g. 'com/example/Main' or 'com.example.Main')"))));
+
+		// 23. read_file
+		tools.add(toolDef("read_file", "Read a non-class file from the workspace (e.g. META-INF/MANIFEST.MF, config files, resources)",
+				readFileSchema()));
+
+		// 24. class_delete
+		tools.add(toolDef("class_delete", "Delete a class from the workspace",
+				requiredProps(prop("className", "string", "Fully qualified class name to delete (e.g. 'com/example/Main' or 'com.example.Main')"))));
+
+		// 25. patch
+		tools.add(toolDef("patch", "Create or apply a workspace patch. Use 'create' to capture current modifications as a patch, or 'apply' to restore a previously created patch.",
+				patchSchema()));
 
 		JsonObject result = new JsonObject();
 		result.add("tools", tools);
@@ -303,6 +339,66 @@ public class RecafMcpServer {
 					body.addProperty("outputDir", getString(args, "outputDir"));
 					if (args.has("className")) body.addProperty("className", getString(args, "className"));
 					yield bridge.extractData(bridge.post("/export/source", GSON.toJson(body)));
+				}
+
+				case "compile_java" -> {
+					JsonObject body = new JsonObject();
+					body.addProperty("className", getString(args, "className"));
+					body.addProperty("source", getString(args, "source"));
+					if (args.has("targetVersion")) body.addProperty("targetVersion", args.get("targetVersion").getAsInt());
+					if (args.has("debug")) body.addProperty("debug", args.get("debug").getAsBoolean());
+					yield bridge.extractData(bridge.post("/compile", GSON.toJson(body)));
+				}
+
+				case "disassemble_class" -> {
+					JsonObject body = new JsonObject();
+					body.addProperty("className", getString(args, "className"));
+					if (args.has("maxChars")) body.addProperty("maxChars", args.get("maxChars").getAsInt());
+					yield bridge.extractData(bridge.post("/disassemble", GSON.toJson(body)));
+				}
+
+				case "assemble_class" -> {
+					JsonObject body = new JsonObject();
+					body.addProperty("className", getString(args, "className"));
+					body.addProperty("source", getString(args, "source"));
+					yield bridge.extractData(bridge.post("/assemble", GSON.toJson(body)));
+				}
+
+				case "method_disassemble" -> {
+					JsonObject body = new JsonObject();
+					body.addProperty("className", getString(args, "className"));
+					body.addProperty("methodName", getString(args, "methodName"));
+					body.addProperty("methodDesc", getString(args, "methodDesc"));
+					if (args.has("maxChars")) body.addProperty("maxChars", args.get("maxChars").getAsInt());
+					yield bridge.extractData(bridge.post("/disassemble/method", GSON.toJson(body)));
+				}
+
+				case "method_bytecode" -> {
+					JsonObject body = new JsonObject();
+					body.addProperty("className", getString(args, "className"));
+					body.addProperty("methodName", getString(args, "methodName"));
+					body.addProperty("methodDesc", getString(args, "methodDesc"));
+					yield bridge.extractData(bridge.post("/bytecode/instructions", GSON.toJson(body)));
+				}
+
+				case "class_outline" -> bridge.extractData(bridge.post("/workspace/outline",
+						jsonBody("className", getString(args, "className"))));
+
+				case "read_file" -> {
+					JsonObject body = new JsonObject();
+					body.addProperty("path", getString(args, "path"));
+					if (args.has("maxChars")) body.addProperty("maxChars", args.get("maxChars").getAsInt());
+					yield bridge.extractData(bridge.post("/workspace/read-file", GSON.toJson(body)));
+				}
+
+				case "class_delete" -> bridge.extractData(bridge.post("/workspace/delete-class",
+						jsonBody("className", getString(args, "className"))));
+
+				case "patch" -> {
+					JsonObject body = new JsonObject();
+					body.addProperty("action", getString(args, "action"));
+					if (args.has("patchJson")) body.addProperty("patchJson", getString(args, "patchJson"));
+					yield bridge.extractData(bridge.post("/patch", GSON.toJson(body)));
 				}
 
 				default -> "{\"error\":\"Unknown tool: " + name + "\"}";
@@ -582,6 +678,106 @@ public class RecafMcpServer {
 		schema.add("properties", properties);
 		JsonArray required = new JsonArray();
 		required.add("outputDir");
+		schema.add("required", required);
+		return schema;
+	}
+
+	private static JsonObject compileJavaSchema() {
+		JsonObject schema = new JsonObject();
+		JsonObject properties = new JsonObject();
+		properties.add("className", typedProp("string", "Fully qualified class name in dot format (e.g. 'com.example.Main')"));
+		properties.add("source", typedProp("string", "Java source code to compile"));
+		properties.add("targetVersion", typedProp("integer", "Java target version (e.g. 11, 17, 21). If omitted, uses default."));
+		properties.add("debug", typedProp("boolean", "Include debug info (line numbers, variables). Default: true"));
+		schema.add("properties", properties);
+		JsonArray required = new JsonArray();
+		required.add("className");
+		required.add("source");
+		schema.add("required", required);
+		return schema;
+	}
+
+	private static JsonObject disassembleClassSchema() {
+		JsonObject schema = new JsonObject();
+		JsonObject properties = new JsonObject();
+		properties.add("className", typedProp("string", "Fully qualified class name (e.g. 'com/example/Main' or 'com.example.Main')"));
+		properties.add("maxChars", typedProp("integer", "Maximum characters to return (default: 120000). Truncates if exceeded."));
+		schema.add("properties", properties);
+		JsonArray required = new JsonArray();
+		required.add("className");
+		schema.add("required", required);
+		return schema;
+	}
+
+	private static JsonObject assembleClassSchema() {
+		JsonObject schema = new JsonObject();
+		JsonObject properties = new JsonObject();
+		properties.add("className", typedProp("string", "Fully qualified class name (e.g. 'com/example/Main' or 'com.example.Main')"));
+		properties.add("source", typedProp("string", "JASM assembly source text to assemble"));
+		schema.add("properties", properties);
+		JsonArray required = new JsonArray();
+		required.add("className");
+		required.add("source");
+		schema.add("required", required);
+		return schema;
+	}
+
+	private static JsonObject methodDisassembleSchema() {
+		JsonObject schema = new JsonObject();
+		JsonObject properties = new JsonObject();
+		properties.add("className", typedProp("string", "Fully qualified class name (e.g. 'com/example/Main')"));
+		properties.add("methodName", typedProp("string", "Method name to disassemble"));
+		properties.add("methodDesc", typedProp("string", "Method descriptor (e.g. '(Ljava/lang/String;)V')"));
+		properties.add("maxChars", typedProp("integer", "Maximum characters to return (default: 120000). Truncates if exceeded."));
+		schema.add("properties", properties);
+		JsonArray required = new JsonArray();
+		required.add("className");
+		required.add("methodName");
+		required.add("methodDesc");
+		schema.add("required", required);
+		return schema;
+	}
+
+	private static JsonObject methodBytecodeSchema() {
+		JsonObject schema = new JsonObject();
+		JsonObject properties = new JsonObject();
+		properties.add("className", typedProp("string", "Fully qualified class name (e.g. 'com/example/Main')"));
+		properties.add("methodName", typedProp("string", "Method name to inspect"));
+		properties.add("methodDesc", typedProp("string", "Method descriptor (e.g. '(I)V')"));
+		schema.add("properties", properties);
+		JsonArray required = new JsonArray();
+		required.add("className");
+		required.add("methodName");
+		required.add("methodDesc");
+		schema.add("required", required);
+		return schema;
+	}
+
+	private static JsonObject readFileSchema() {
+		JsonObject schema = new JsonObject();
+		JsonObject properties = new JsonObject();
+		properties.add("path", typedProp("string", "File path relative to archive root (e.g. 'META-INF/MANIFEST.MF')"));
+		properties.add("maxChars", typedProp("integer", "Maximum characters to return (default: 60000). Truncates if exceeded."));
+		schema.add("properties", properties);
+		JsonArray required = new JsonArray();
+		required.add("path");
+		schema.add("required", required);
+		return schema;
+	}
+
+	private static JsonObject patchSchema() {
+		JsonObject schema = new JsonObject();
+		JsonObject properties = new JsonObject();
+		JsonObject action = typedProp("string", "Patch action: 'create' to capture workspace changes, 'apply' to restore a patch");
+		JsonArray enumVals = new JsonArray();
+		enumVals.add("create");
+		enumVals.add("apply");
+		action.add("enum", enumVals);
+		properties.add("action", action);
+		properties.add("patchJson", typedProp("string", "Patch JSON string (required when action is 'apply')"));
+		schema.add("properties", properties);
+		JsonArray required = new JsonArray();
+		required.add("action");
 		schema.add("required", required);
 		return schema;
 	}

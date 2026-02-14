@@ -20,6 +20,9 @@ public final class ErrorMapper {
 	public static final String DECOMPILE_TIMEOUT = "DECOMPILE_TIMEOUT";
 	public static final String FILE_NOT_FOUND = "FILE_NOT_FOUND";
 	public static final String ASSEMBLER_FAILED = "ASSEMBLER_FAILED";
+	public static final String COMPILE_FAILED = "COMPILE_FAILED";
+	public static final String COMPILER_UNAVAILABLE = "COMPILER_UNAVAILABLE";
+	public static final String PATCH_FAILED = "PATCH_FAILED";
 	public static final String INTERNAL_ERROR = "INTERNAL_ERROR";
 
 	private ErrorMapper() {}

@@ -1,12 +1,12 @@
 # Recaf MCP 插件
 
-[![Version](https://img.shields.io/badge/version-1.1.0-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/version-1.2.0-brightgreen.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![JDK 22+](https://img.shields.io/badge/JDK-22%2B-orange.svg)](https://openjdk.org/)
 [![MCP Protocol](https://img.shields.io/badge/MCP-2024--11--05-green.svg)](https://modelcontextprotocol.io/)
-[![Tools](https://img.shields.io/badge/MCP_Tools-16-purple.svg)]()
+[![Tools](https://img.shields.io/badge/MCP_Tools-25-purple.svg)]()
 
-让 AI 助手通过 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 操控 [Recaf 4.x](https://github.com/Col-E/Recaf)，直接在 AI 工作流中完成 Java 字节码的反编译、搜索、分析、字节码编辑、类对比和导出。
+让 AI 助手通过 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 操控 [Recaf 4.x](https://github.com/Col-E/Recaf)，直接在 AI 工作流中完成 Java 字节码的反编译、搜索、分析、字节码编辑、Java 编译、JASM 汇编/反汇编、类对比、Patch 管理和导出。
 
 [English](README.md)
 
@@ -26,12 +26,12 @@
                                                                                     └─────────────────┘
 ```
 
-- **Recaf 插件（Bridge Server）**— 运行在 Recaf 进程内部，通过 CDI（Jakarta）注入 Recaf 服务，在 `localhost:9847` 暴露 HTTP 接口。
+- **Recaf 插件（Bridge Server）**— 运行在 Recaf 进程内部，通过 CDI（Jakarta）注入 14 个 Recaf 服务，在 `localhost:9847` 暴露 HTTP 接口。
 - **MCP Server** — 独立的 fat JAR，由 AI 客户端启动。通过 STDIO JSON-RPC 与 AI 通信，将工具调用通过 HTTP 转发给 Bridge Server。
 
 之所以需要这种分离设计，是因为 Recaf 作为 JavaFX 桌面应用有自己的模块系统，而 MCP 协议要求 AI 客户端能通过 STDIO 启动和管理一个独立进程。
 
-## MCP 工具列表（16 个）
+## MCP 工具列表（25 个）
 
 ### 工作区管理
 
@@ -43,6 +43,9 @@
 | `list_workspaces` | 列出所有已注册的工作区 | — |
 | `list_classes` | 列出类，支持 offset/limit 分页 | `filter`、`offset`、`limit` |
 | `get_class_info` | 获取类详情：字段、方法、接口 | `className` |
+| `class_outline` | 轻量级类结构概览（无代码，速度快） | `className` |
+| `read_file` | 读取非 class 文件（如 MANIFEST.MF、配置文件） | `path`、`maxChars` |
+| `class_delete` | 从工作区删除一个类 | `className` |
 
 ### 分析
 
@@ -53,6 +56,16 @@
 | `get_call_graph` | 获取方法调用图（调用者和被调用者） | `className`、`methodName`、`depth` |
 | `get_inheritance` | 获取继承层次（父类/子类） | `className`、`direction` |
 | `diff_classes` | 对比两个类或类与源码 | `className1`、`className2` 或 `source` |
+| `method_bytecode` | 查看方法字节码指令（操作码、操作数、try-catch、局部变量） | `className`、`methodName`、`methodDesc` |
+
+### 编译与汇编
+
+| 工具 | 说明 | 主要参数 |
+|------|------|----------|
+| `compile_java` | 编译 Java 源码并应用到工作区 | `className`、`source`、`targetVersion`、`debug` |
+| `disassemble_class` | 将类反汇编为 JASM 文本 | `className`、`maxChars` |
+| `assemble_class` | 汇编 JASM 源码并应用到工作区 | `className`、`source` |
+| `method_disassemble` | 反汇编单个方法为 JASM 文本 | `className`、`methodName`、`methodDesc`、`maxChars` |
 
 ### 修改
 
@@ -60,6 +73,7 @@
 |------|------|----------|
 | `rename_symbol` | 重命名类/字段/方法（自动更新所有引用） | `type`、`oldName`、`newName`、`className` |
 | `edit_bytecode` | 添加/删除/修改方法和字段 | `className`、`operation` + 操作相关参数 |
+| `patch` | 创建或应用工作区变更补丁 | `action`（create/apply）、`patchJson` |
 
 ### 导出
 
@@ -93,8 +107,8 @@ cd recaf-mcp-plugin
 
 | 文件 | 用途 |
 |------|------|
-| `build/libs/recaf-mcp-plugin-1.1.0.jar` | Recaf 插件（加载到 Recaf 内部，运行 Bridge Server） |
-| `build/mcp/recaf-mcp-server-1.1.0.jar` | MCP Server（独立 fat JAR，由 AI 客户端启动） |
+| `build/libs/recaf-mcp-plugin-1.2.0.jar` | Recaf 插件（加载到 Recaf 内部，运行 Bridge Server） |
+| `build/mcp/recaf-mcp-server-1.2.0.jar` | MCP Server（独立 fat JAR，由 AI 客户端启动） |
 
 ## 安装与使用
 
@@ -110,7 +124,7 @@ cd recaf-mcp-plugin
 
 **方式 B：手动安装**
 
-将 `build/libs/recaf-mcp-plugin-1.1.0.jar` 复制到 Recaf 的插件目录：
+将 `build/libs/recaf-mcp-plugin-1.2.0.jar` 复制到 Recaf 的插件目录：
 
 | 操作系统 | 插件目录 |
 |---------|---------|
@@ -139,7 +153,7 @@ cd recaf-mcp-plugin
   "mcpServers": {
     "recaf": {
       "command": "java",
-      "args": ["-jar", "/你的绝对路径/build/mcp/recaf-mcp-server-1.1.0.jar"]
+      "args": ["-jar", "/你的绝对路径/build/mcp/recaf-mcp-server-1.2.0.jar"]
     }
   }
 }
@@ -156,7 +170,7 @@ cd recaf-mcp-plugin
   "mcpServers": {
     "recaf": {
       "command": "java",
-      "args": ["-jar", "/你的绝对路径/build/mcp/recaf-mcp-server-1.1.0.jar"]
+      "args": ["-jar", "/你的绝对路径/build/mcp/recaf-mcp-server-1.2.0.jar"]
     }
   }
 }
@@ -178,8 +192,12 @@ Recaf 和 AI 客户端都启动后，直接用自然语言交互：
 把 com/example/a 重命名为 com/example/LoginManager
 对比 com/example/A 和 com/example/B 两个类
 删除 com/example/Foo 中的 unused 方法
+查看 com/example/Main.main 方法的字节码指令
+反汇编 com/example/Crypto 为 JASM
+把修改后的 Java 源码编译回工作区
+读取 META-INF/MANIFEST.MF 文件
+创建一个包含所有修改的 Patch
 导出修改后的 JAR 到 /tmp/output.jar
-导出所有反编译源码到 /tmp/src
 ```
 
 ## 使用场景示例
@@ -218,25 +236,41 @@ Recaf 和 AI 客户端都启动后，直接用自然语言交互：
 4. "导出修改后的 JAR 到 /tmp/patched.jar"
 ```
 
+### 编译与汇编往返
+
+```
+1. "打开 /path/to/target.jar"
+2. "反编译 com/app/Main" — 获取 Java 源码
+3. （修改源码）→ "编译这段 Java 源码到 com.app.Main" — 编译并应用
+4. "反编译 com/app/Main" — 验证修改生效
+5. "反汇编 com/app/Crypto" — 获取 JASM 汇编文本
+6. "查看 com/app/Crypto.encrypt 的字节码" — 检查方法指令
+7. "创建 Patch" — 将所有修改保存为 JSON
+8. "导出修改后的 JAR 到 /tmp/patched.jar"
+```
+
 ## 项目结构
 
 ```
 src/main/java/dev/recaf/mcp/
-├── RecafMcpPlugin.java                  # 插件入口 — CDI 注入 Recaf 服务
+├── RecafMcpPlugin.java                  # 插件入口 — CDI 注入 14 个 Recaf 服务
 ├── bridge/
 │   ├── BridgeServer.java                # HTTP 服务器 :9847 — 路由请求到各处理器
 │   ├── WorkspaceRegistry.java           # 多工作区注册表 — ID → Workspace 映射
 │   └── handlers/
-│       ├── WorkspaceHandler.java        # /workspace/* — 打开、关闭、切换、列表、类详情
+│       ├── WorkspaceHandler.java        # /workspace/* — 打开、关闭、切换、列表、类详情、概览、读文件、删除类
 │       ├── DecompileHandler.java        # /decompile — 反编译类到 Java 源码
 │       ├── SearchHandler.java           # /search — 字符串、类、方法、字段、声明搜索
 │       ├── AnalysisHandler.java         # /analysis/* — 调用图和继承层次分析
 │       ├── MappingHandler.java          # /mapping/* — 重命名符号和导出映射
-│       ├── BytecodeHandler.java         # /bytecode/* — 编辑/添加/删除方法和字段
+│       ├── BytecodeHandler.java         # /bytecode/* — 编辑/添加/删除方法和字段、方法字节码指令
 │       ├── DiffHandler.java             # /diff — 对比两个类（unified diff）
-│       └── ExportHandler.java           # /export/* — 导出 JAR 和反编译源码
+│       ├── ExportHandler.java           # /export/* — 导出 JAR 和反编译源码
+│       ├── CompileHandler.java          # /compile — 编译 Java 源码并应用到工作区
+│       ├── AssemblerHandler.java        # /disassemble, /assemble — JASM 反汇编与汇编
+│       └── PatchHandler.java            # /patch — 创建与应用工作区补丁
 ├── server/
-│   ├── RecafMcpServer.java              # MCP Server — STDIO JSON-RPC，16 个工具分发
+│   ├── RecafMcpServer.java              # MCP Server — STDIO JSON-RPC，25 个工具分发
 │   └── BridgeClient.java               # HTTP 客户端 — 将 MCP 工具调用转发到 Bridge Server
 └── util/
     ├── JsonUtil.java                    # JSON 响应工具类
@@ -258,6 +292,9 @@ src/main/java/dev/recaf/mcp/
 | `POST /workspace/class-info` | 类详情：`{"className": "com/example/Main"}` |
 | `POST /workspace/switch` | 切换工作区：`{"workspaceId": "xxx"}` |
 | `GET /workspace/list-workspaces` | 列出所有已注册工作区 |
+| `POST /workspace/outline` | 类概览：`{"className": "com/example/Main"}` — 轻量级结构，无代码 |
+| `POST /workspace/read-file` | 读取文件：`{"path": "META-INF/MANIFEST.MF", "maxChars": 60000}` |
+| `POST /workspace/delete-class` | 删除类：`{"className": "com/example/Main"}` |
 | `POST /decompile` | 反编译：`{"className": "com/example/Main"}` |
 | `POST /search` | 搜索：`{"query": "文本", "type": "string", "maxResults": 100}` |
 | `POST /analysis/call-graph` | 调用图：`{"className": "...", "methodName": "...", "depth": 3}` |
@@ -269,9 +306,15 @@ src/main/java/dev/recaf/mcp/
 | `POST /bytecode/remove-member` | 删除成员：`{"className": "...", "memberName": "...", "memberType": "method"}` |
 | `POST /bytecode/add-field` | 添加字段：`{"className": "...", "fieldName": "...", "descriptor": "I"}` |
 | `POST /bytecode/add-method` | 添加方法：`{"className": "...", "methodName": "...", "methodDesc": "()V"}` |
+| `POST /bytecode/instructions` | 方法字节码：`{"className": "...", "methodName": "...", "methodDesc": "..."}` |
 | `POST /diff` | 类对比：`{"className1": "A", "className2": "B"}` 或 `{"className1": "A", "source": "..."}` |
 | `POST /export/jar` | 导出 JAR：`{"outputPath": "/path/to/output.jar"}` |
 | `POST /export/source` | 导出源码：`{"outputDir": "/path/to/src", "className": "可选"}` |
+| `POST /compile` | 编译 Java：`{"className": "com.example.Main", "source": "...", "targetVersion": 17, "debug": true}` |
+| `POST /disassemble` | 反汇编类：`{"className": "com/example/Main", "maxChars": 120000}` |
+| `POST /disassemble/method` | 反汇编方法：`{"className": "...", "methodName": "...", "methodDesc": "...", "maxChars": 120000}` |
+| `POST /assemble` | 汇编 JASM：`{"className": "com/example/Main", "source": "..."}` |
+| `POST /patch` | Patch：`{"action": "create"}` 或 `{"action": "apply", "patchJson": "..."}` |
 
 ## 技术细节
 
@@ -285,7 +328,7 @@ src/main/java/dev/recaf/mcp/
 | 类列表默认限制 | 500（支持 offset 分页） |
 | Java 工具链 | JDK 22+ |
 | 构建系统 | Gradle + Shadow 插件（fat JAR 打包） |
-| MCP 工具总数 | 16 |
+| MCP 工具总数 | 25 |
 
 ## 常见问题
 
@@ -294,7 +337,7 @@ src/main/java/dev/recaf/mcp/
 - 检查 Recaf 的 Logging 面板是否显示了启动横幅。
 
 **AI 客户端中看不到 MCP 工具**
-- 确认 `recaf-mcp-server-1.1.0.jar` 的路径正确且为绝对路径。
+- 确认 `recaf-mcp-server-1.2.0.jar` 的路径正确且为绝对路径。
 - 确保 `java` 指向 JDK 22+：运行 `java -version` 检查。
 - 修改 MCP 配置后需要重启 AI 客户端。
 
@@ -303,14 +346,27 @@ src/main/java/dev/recaf/mcp/
 - 检查类名格式：使用 `/` 分隔符（如 `com/example/Main`），而非 `.` 分隔符。
 
 **结构化错误响应**
-- 所有错误现在包含 `code`、`message` 和 `suggestion` 字段。
-- 常见错误码：`NO_WORKSPACE`、`CLASS_NOT_FOUND`、`MEMBER_NOT_FOUND`、`INVALID_PARAMS`、`DECOMPILE_TIMEOUT`。
+- 所有错误包含 `code`、`message` 和 `suggestion` 字段。
+- 常见错误码：`NO_WORKSPACE`、`CLASS_NOT_FOUND`、`MEMBER_NOT_FOUND`、`INVALID_PARAMS`、`DECOMPILE_TIMEOUT`、`COMPILE_FAILED`、`ASSEMBLER_FAILED`、`PATCH_FAILED`。
 
 **构建失败**
 - 确保已安装 JDK 22+。运行 `./gradlew -q javaToolchains` 查看已检测到的 JDK。
 - 如果使用非默认 JDK，请配置 [Gradle 工具链](https://docs.gradle.org/current/userguide/toolchains.html)。
 
 ## 更新日志
+
+### v1.2.0
+
+- **Java 编译** — `compile_java` 通过 Recaf 的 JavacCompiler 编译 Java 源码并应用到工作区
+- **JASM 汇编/反汇编** — `disassemble_class` 和 `assemble_class` 支持完整类的 JASM 往返；`method_disassemble` 支持单个方法反汇编
+- **方法字节码查看** — `method_bytecode` 通过 ASM tree API 展示详细字节码指令（操作码、操作数、try-catch 块、局部变量）
+- **类概览** — `class_outline` 提供轻量级类结构（字段、方法、访问标志），无需反编译
+- **文件读取** — `read_file` 读取工作区中的非 class 文件（如 MANIFEST.MF、配置文件、资源文件）
+- **类删除** — `class_delete` 从工作区删除指定类
+- **Patch 系统** — `patch` 工具创建和应用工作区变更补丁（可序列化 JSON 格式）
+- **新增错误码** — `COMPILE_FAILED`、`COMPILER_UNAVAILABLE`、`PATCH_FAILED`
+- **4 个新 Recaf 服务注入** — AssemblerPipelineManager、JavacCompiler、PatchProvider、PatchApplier
+- 工具数量：16 → 25
 
 ### v1.1.0
 

@@ -1,12 +1,12 @@
 # Recaf MCP Plugin
 
-[![Version](https://img.shields.io/badge/version-1.1.0-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/version-1.2.0-brightgreen.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![JDK 22+](https://img.shields.io/badge/JDK-22%2B-orange.svg)](https://openjdk.org/)
 [![MCP Protocol](https://img.shields.io/badge/MCP-2024--11--05-green.svg)](https://modelcontextprotocol.io/)
-[![Tools](https://img.shields.io/badge/MCP_Tools-16-purple.svg)]()
+[![Tools](https://img.shields.io/badge/MCP_Tools-25-purple.svg)]()
 
-Enable AI assistants to control [Recaf 4.x](https://github.com/Col-E/Recaf) through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) — decompile, search, analyze, edit bytecode, diff classes, and export Java bytecode directly from your AI workflow.
+Enable AI assistants to control [Recaf 4.x](https://github.com/Col-E/Recaf) through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) — decompile, search, analyze, edit bytecode, compile Java, assemble/disassemble JASM, diff classes, patch workspaces, and export Java bytecode directly from your AI workflow.
 
 [中文文档](README_CN.md)
 
@@ -31,7 +31,7 @@ The plugin uses a dual-process architecture to bridge AI assistants with Recaf's
 
 This separation is necessary because Recaf runs as a JavaFX desktop application with its own module system, while MCP requires a STDIO-based process that the AI client can spawn and manage.
 
-## Available MCP Tools (16)
+## Available MCP Tools (25)
 
 ### Workspace Management
 
@@ -43,6 +43,9 @@ This separation is necessary because Recaf runs as a JavaFX desktop application 
 | `list_workspaces` | List all registered workspaces | — |
 | `list_classes` | List classes with offset/limit pagination | `filter`, `offset`, `limit` |
 | `get_class_info` | Get class details: fields, methods, interfaces | `className` |
+| `class_outline` | Lightweight class structure (no code, fast) | `className` |
+| `read_file` | Read a non-class file (e.g. MANIFEST.MF, configs) | `path`, `maxChars` |
+| `class_delete` | Delete a class from the workspace | `className` |
 
 ### Analysis
 
@@ -53,6 +56,16 @@ This separation is necessary because Recaf runs as a JavaFX desktop application 
 | `get_call_graph` | Get method call graph (callers and callees) | `className`, `methodName`, `depth` |
 | `get_inheritance` | Get inheritance hierarchy (parents/children) | `className`, `direction` |
 | `diff_classes` | Compare two classes or class vs. source code | `className1`, `className2` or `source` |
+| `method_bytecode` | View method bytecode instructions (opcodes, operands, try-catch, locals) | `className`, `methodName`, `methodDesc` |
+
+### Compilation & Assembly
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `compile_java` | Compile Java source and apply to workspace | `className`, `source`, `targetVersion`, `debug` |
+| `disassemble_class` | Disassemble a class into JASM text | `className`, `maxChars` |
+| `assemble_class` | Assemble JASM source and apply to workspace | `className`, `source` |
+| `method_disassemble` | Disassemble a single method into JASM text | `className`, `methodName`, `methodDesc`, `maxChars` |
 
 ### Modification
 
@@ -60,6 +73,7 @@ This separation is necessary because Recaf runs as a JavaFX desktop application 
 |------|-------------|----------------|
 | `rename_symbol` | Rename class/field/method (updates all refs) | `type`, `oldName`, `newName`, `className` |
 | `edit_bytecode` | Add/remove/modify methods and fields | `className`, `operation`, + operation-specific params |
+| `patch` | Create or apply workspace change patches | `action` (create/apply), `patchJson` |
 
 ### Export
 
@@ -93,8 +107,8 @@ This produces two JARs:
 
 | File | Purpose |
 |------|---------|
-| `build/libs/recaf-mcp-plugin-1.1.0.jar` | Recaf plugin (loads inside Recaf, runs the Bridge Server) |
-| `build/mcp/recaf-mcp-server-1.1.0.jar` | MCP Server (standalone fat JAR, launched by AI client) |
+| `build/libs/recaf-mcp-plugin-1.2.0.jar` | Recaf plugin (loads inside Recaf, runs the Bridge Server) |
+| `build/mcp/recaf-mcp-server-1.2.0.jar` | MCP Server (standalone fat JAR, launched by AI client) |
 
 ## Setup & Usage
 
@@ -110,7 +124,7 @@ This builds the plugin and launches Recaf with it auto-loaded.
 
 **Option B: Manual installation**
 
-Copy `build/libs/recaf-mcp-plugin-1.1.0.jar` to Recaf's plugin directory:
+Copy `build/libs/recaf-mcp-plugin-1.2.0.jar` to Recaf's plugin directory:
 
 | OS | Plugin Directory |
 |----|-----------------|
@@ -139,7 +153,7 @@ Add to `~/.claude.json`:
   "mcpServers": {
     "recaf": {
       "command": "java",
-      "args": ["-jar", "/absolute/path/to/build/mcp/recaf-mcp-server-1.1.0.jar"]
+      "args": ["-jar", "/absolute/path/to/build/mcp/recaf-mcp-server-1.2.0.jar"]
     }
   }
 }
@@ -156,7 +170,7 @@ Add to your MCP configuration (Settings → MCP):
   "mcpServers": {
     "recaf": {
       "command": "java",
-      "args": ["-jar", "/absolute/path/to/build/mcp/recaf-mcp-server-1.1.0.jar"]
+      "args": ["-jar", "/absolute/path/to/build/mcp/recaf-mcp-server-1.2.0.jar"]
     }
   }
 }
@@ -178,8 +192,12 @@ Show me the call graph for com/example/Main
 Rename com/example/a to com/example/LoginManager
 Compare com/example/A with com/example/B
 Remove the method "unused" from com/example/Foo
+Show me the bytecode instructions for com/example/Main.main
+Disassemble com/example/Crypto into JASM
+Compile this modified Java source back into the workspace
+Read the META-INF/MANIFEST.MF file
+Create a patch of all my changes
 Export the modified JAR to /tmp/output.jar
-Export all decompiled source to /tmp/src
 ```
 
 ## Example Workflows
@@ -218,25 +236,41 @@ Export all decompiled source to /tmp/src
 4. "Export the modified JAR to /tmp/patched.jar"
 ```
 
+### Compile & Assemble Round-Trip
+
+```
+1. "Open /path/to/target.jar"
+2. "Decompile com/app/Main" — get the Java source
+3. (modify the source) → "Compile this Java source for com.app.Main" — compile & apply
+4. "Decompile com/app/Main" — verify the changes took effect
+5. "Disassemble com/app/Crypto" — get JASM assembly text
+6. "Show me the bytecode for com/app/Crypto.encrypt" — inspect method instructions
+7. "Create a patch" — save all modifications as JSON
+8. "Export the modified JAR to /tmp/patched.jar"
+```
+
 ## Project Structure
 
 ```
 src/main/java/dev/recaf/mcp/
-├── RecafMcpPlugin.java                  # Plugin entry point — CDI injection of Recaf services
+├── RecafMcpPlugin.java                  # Plugin entry point — CDI injection of 14 Recaf services
 ├── bridge/
 │   ├── BridgeServer.java                # HTTP server on :9847 — routes requests to handlers
 │   ├── WorkspaceRegistry.java           # Multi-workspace registry — ID → Workspace mapping
 │   └── handlers/
-│       ├── WorkspaceHandler.java        # /workspace/* — open, close, switch, list, classes, info
+│       ├── WorkspaceHandler.java        # /workspace/* — open, close, switch, list, classes, info, outline, read-file, delete-class
 │       ├── DecompileHandler.java        # /decompile — decompile class to Java source
 │       ├── SearchHandler.java           # /search — string, class, method, field, declaration search
 │       ├── AnalysisHandler.java         # /analysis/* — call graph & inheritance hierarchy
 │       ├── MappingHandler.java          # /mapping/* — rename symbols & export mappings
-│       ├── BytecodeHandler.java         # /bytecode/* — edit/add/remove methods & fields
+│       ├── BytecodeHandler.java         # /bytecode/* — edit/add/remove methods & fields, method bytecode instructions
 │       ├── DiffHandler.java             # /diff — compare two classes (unified diff)
-│       └── ExportHandler.java           # /export/* — export JAR & decompiled source
+│       ├── ExportHandler.java           # /export/* — export JAR & decompiled source
+│       ├── CompileHandler.java          # /compile — compile Java source & apply to workspace
+│       ├── AssemblerHandler.java        # /disassemble, /assemble — JASM disassembly & assembly
+│       └── PatchHandler.java            # /patch — create & apply workspace patches
 ├── server/
-│   ├── RecafMcpServer.java              # MCP Server — STDIO JSON-RPC, 16 tools dispatch
+│   ├── RecafMcpServer.java              # MCP Server — STDIO JSON-RPC, 25 tools dispatch
 │   └── BridgeClient.java               # HTTP client — forwards MCP tool calls to Bridge Server
 └── util/
     ├── JsonUtil.java                    # JSON response helpers
@@ -272,6 +306,15 @@ All endpoints accept POST with JSON body and return JSON responses.
 | `POST /diff` | Diff classes: `{"className1": "A", "className2": "B"}` or `{"className1": "A", "source": "..."}` |
 | `POST /export/jar` | Export JAR: `{"outputPath": "/path/to/output.jar"}` |
 | `POST /export/source` | Export source: `{"outputDir": "/path/to/src", "className": "optional"}` |
+| `POST /workspace/outline` | Class outline: `{"className": "com/example/Main"}` — lightweight structure, no code |
+| `POST /workspace/read-file` | Read file: `{"path": "META-INF/MANIFEST.MF", "maxChars": 60000}` |
+| `POST /workspace/delete-class` | Delete class: `{"className": "com/example/Main"}` |
+| `POST /bytecode/instructions` | Method bytecode: `{"className": "...", "methodName": "...", "methodDesc": "..."}` |
+| `POST /compile` | Compile Java: `{"className": "com.example.Main", "source": "...", "targetVersion": 17, "debug": true}` |
+| `POST /disassemble` | Disassemble class: `{"className": "com/example/Main", "maxChars": 120000}` |
+| `POST /disassemble/method` | Disassemble method: `{"className": "...", "methodName": "...", "methodDesc": "...", "maxChars": 120000}` |
+| `POST /assemble` | Assemble JASM: `{"className": "com/example/Main", "source": "..."}` |
+| `POST /patch` | Patch: `{"action": "create"}` or `{"action": "apply", "patchJson": "..."}` |
 
 ## Technical Details
 
@@ -285,7 +328,7 @@ All endpoints accept POST with JSON body and return JSON responses.
 | Default Class List Limit | 500 (with offset pagination) |
 | Java Toolchain | JDK 22+ |
 | Build System | Gradle with Shadow plugin for fat JAR |
-| Total MCP Tools | 16 |
+| Total MCP Tools | 25 |
 
 ## Troubleshooting
 
@@ -294,7 +337,7 @@ All endpoints accept POST with JSON body and return JSON responses.
 - Check Recaf's Logging panel for the startup banner.
 
 **MCP tools not appearing in AI client**
-- Verify the path to `recaf-mcp-server-1.1.0.jar` is correct and absolute.
+- Verify the path to `recaf-mcp-server-1.2.0.jar` is correct and absolute.
 - Make sure `java` points to JDK 22+: run `java -version` to check.
 - Restart your AI client after updating the MCP configuration.
 
@@ -304,13 +347,26 @@ All endpoints accept POST with JSON body and return JSON responses.
 
 **Structured error responses**
 - All errors now include `code`, `message`, and `suggestion` fields.
-- Common codes: `NO_WORKSPACE`, `CLASS_NOT_FOUND`, `MEMBER_NOT_FOUND`, `INVALID_PARAMS`, `DECOMPILE_TIMEOUT`.
+- Common codes: `NO_WORKSPACE`, `CLASS_NOT_FOUND`, `MEMBER_NOT_FOUND`, `INVALID_PARAMS`, `DECOMPILE_TIMEOUT`, `COMPILE_FAILED`, `ASSEMBLER_FAILED`, `PATCH_FAILED`.
 
 **Build fails**
 - Ensure JDK 22+ is installed. Run `./gradlew -q javaToolchains` to see detected JDKs.
 - If using a non-default JDK, configure a [Gradle toolchain](https://docs.gradle.org/current/userguide/toolchains.html).
 
 ## Changelog
+
+### v1.2.0
+
+- **Java compilation** — `compile_java` compiles Java source code via Recaf's JavacCompiler and applies the result to the workspace
+- **JASM assembly/disassembly** — `disassemble_class` and `assemble_class` for full class JASM round-trip; `method_disassemble` for single method disassembly
+- **Method bytecode viewer** — `method_bytecode` shows detailed bytecode instructions (opcodes, operands, try-catch blocks, local variables) via ASM tree API
+- **Class outline** — `class_outline` provides lightweight class structure (fields, methods, access flags) without decompiling code
+- **File reader** — `read_file` reads non-class files from the workspace (e.g. MANIFEST.MF, config files, resources)
+- **Class deletion** — `class_delete` removes a class from the workspace
+- **Patch system** — `patch` tool creates and applies workspace change patches (serializable JSON format)
+- **New error codes** — `COMPILE_FAILED`, `COMPILER_UNAVAILABLE`, `PATCH_FAILED`
+- **4 new Recaf service injections** — AssemblerPipelineManager, JavacCompiler, PatchProvider, PatchApplier
+- Tool count: 16 → 25
 
 ### v1.1.0
 

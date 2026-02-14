@@ -6,9 +6,14 @@ import dev.recaf.mcp.bridge.BridgeServer;
 import dev.recaf.mcp.bridge.WorkspaceRegistry;
 import dev.recaf.mcp.util.ErrorMapper;
 import dev.recaf.mcp.util.JsonUtil;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldNode;
+import org.objectweb.asm.tree.MethodNode;
 import org.slf4j.Logger;
 import software.coley.recaf.analytics.logging.Logging;
 import software.coley.recaf.info.ClassInfo;
+import software.coley.recaf.info.FileInfo;
 import software.coley.recaf.info.JvmClassInfo;
 import software.coley.recaf.info.member.FieldMember;
 import software.coley.recaf.info.member.MethodMember;
@@ -17,9 +22,12 @@ import software.coley.recaf.services.workspace.WorkspaceManager;
 import software.coley.recaf.services.workspace.io.ResourceImporter;
 import software.coley.recaf.workspace.model.BasicWorkspace;
 import software.coley.recaf.workspace.model.Workspace;
+import software.coley.recaf.workspace.model.bundle.FileBundle;
+import software.coley.recaf.workspace.model.bundle.JvmClassBundle;
 import software.coley.recaf.workspace.model.resource.WorkspaceResource;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
@@ -304,6 +312,168 @@ public class WorkspaceHandler {
 		data.addProperty("count", workspaces.size());
 		data.add("workspaces", JsonUtil.gson().toJsonTree(workspaces));
 		BridgeServer.sendJson(exchange, 200, JsonUtil.successResponse(data));
+	}
+
+	/**
+	 * POST /workspace/outline  { "className": "com/example/Foo" }
+	 * Lightweight class structure using ASM with SKIP_CODE | SKIP_DEBUG | SKIP_FRAMES.
+	 */
+	public void handleOutline(HttpExchange exchange) throws IOException {
+		Workspace workspace = workspaceManager.getCurrent();
+		if (workspace == null) {
+			BridgeServer.sendJson(exchange, 200, ErrorMapper.noWorkspace());
+			return;
+		}
+
+		String body = BridgeServer.readBody(exchange);
+		JsonObject req = JsonUtil.parseObject(body);
+		String className = JsonUtil.getString(req, "className", null);
+
+		if (className == null || className.isBlank()) {
+			BridgeServer.sendJson(exchange, 400, ErrorMapper.missingParam("className"));
+			return;
+		}
+
+		String normalizedName = className.replace('.', '/');
+		ClassPathNode classPath = workspace.findJvmClass(normalizedName);
+		if (classPath == null) {
+			BridgeServer.sendJson(exchange, 404, ErrorMapper.classNotFound(className));
+			return;
+		}
+
+		try {
+			JvmClassInfo classInfo = classPath.getValue().asJvmClass();
+			byte[] bytecode = classInfo.getBytecode();
+
+			ClassReader reader = new ClassReader(bytecode);
+			ClassNode classNode = new ClassNode();
+			reader.accept(classNode, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+
+			JsonObject data = new JsonObject();
+			data.addProperty("name", classNode.name);
+			data.addProperty("superName", classNode.superName);
+			data.addProperty("access", classNode.access);
+			data.add("interfaces", JsonUtil.gson().toJsonTree(classNode.interfaces));
+
+			List<JsonObject> fields = new ArrayList<>();
+			if (classNode.fields != null) {
+				for (FieldNode fn : classNode.fields) {
+					JsonObject f = new JsonObject();
+					f.addProperty("name", fn.name);
+					f.addProperty("desc", fn.desc);
+					f.addProperty("access", fn.access);
+					fields.add(f);
+				}
+			}
+			data.add("fields", JsonUtil.gson().toJsonTree(fields));
+
+			List<JsonObject> methods = new ArrayList<>();
+			if (classNode.methods != null) {
+				for (MethodNode mn : classNode.methods) {
+					JsonObject m = new JsonObject();
+					m.addProperty("name", mn.name);
+					m.addProperty("desc", mn.desc);
+					m.addProperty("access", mn.access);
+					methods.add(m);
+				}
+			}
+			data.add("methods", JsonUtil.gson().toJsonTree(methods));
+
+			BridgeServer.sendJson(exchange, 200, JsonUtil.successResponse(data));
+			logger.info("[MCP] Outline for {}: {} fields, {} methods", normalizedName, fields.size(), methods.size());
+		} catch (Exception e) {
+			logger.error("Outline failed for {}", className, e);
+			BridgeServer.sendJson(exchange, 500, ErrorMapper.mapException("Class outline", e));
+		}
+	}
+
+	/**
+	 * POST /workspace/read-file  { "path": "META-INF/MANIFEST.MF", "maxChars": 60000 }
+	 * Read a non-class file from the workspace.
+	 */
+	public void handleReadFile(HttpExchange exchange) throws IOException {
+		Workspace workspace = workspaceManager.getCurrent();
+		if (workspace == null) {
+			BridgeServer.sendJson(exchange, 200, ErrorMapper.noWorkspace());
+			return;
+		}
+
+		String body = BridgeServer.readBody(exchange);
+		JsonObject req = JsonUtil.parseObject(body);
+		String path = JsonUtil.getString(req, "path", null);
+		int maxChars = JsonUtil.getInt(req, "maxChars", 60000);
+
+		if (path == null || path.isBlank()) {
+			BridgeServer.sendJson(exchange, 400, ErrorMapper.missingParam("path"));
+			return;
+		}
+
+		try {
+			FileBundle fileBundle = workspace.getPrimaryResource().getFileBundle();
+			FileInfo fileInfo = fileBundle.get(path);
+			if (fileInfo == null) {
+				BridgeServer.sendJson(exchange, 404, ErrorMapper.errorResponse(
+						ErrorMapper.FILE_NOT_FOUND, "File not found in workspace: " + path,
+						"Check the file path. Files are relative to the archive root (e.g. 'META-INF/MANIFEST.MF')."));
+				return;
+			}
+
+			byte[] rawBytes = fileInfo.getRawContent();
+			String content = new String(rawBytes, StandardCharsets.UTF_8);
+			boolean truncated = false;
+			if (content.length() > maxChars) {
+				content = content.substring(0, maxChars);
+				truncated = true;
+			}
+
+			JsonObject data = new JsonObject();
+			data.addProperty("path", path);
+			data.addProperty("size", rawBytes.length);
+			data.addProperty("content", content);
+			data.addProperty("truncated", truncated);
+			BridgeServer.sendJson(exchange, 200, JsonUtil.successResponse(data));
+			logger.info("[MCP] Read file: {} ({} bytes, truncated={})", path, rawBytes.length, truncated);
+		} catch (Exception e) {
+			logger.error("Read file failed for {}", path, e);
+			BridgeServer.sendJson(exchange, 500, ErrorMapper.mapException("Read file", e));
+		}
+	}
+
+	/**
+	 * POST /workspace/delete-class  { "className": "com/example/Foo" }
+	 * Delete a class from the workspace.
+	 */
+	public void handleDeleteClass(HttpExchange exchange) throws IOException {
+		Workspace workspace = workspaceManager.getCurrent();
+		if (workspace == null) {
+			BridgeServer.sendJson(exchange, 200, ErrorMapper.noWorkspace());
+			return;
+		}
+
+		String body = BridgeServer.readBody(exchange);
+		JsonObject req = JsonUtil.parseObject(body);
+		String className = JsonUtil.getString(req, "className", null);
+
+		if (className == null || className.isBlank()) {
+			BridgeServer.sendJson(exchange, 400, ErrorMapper.missingParam("className"));
+			return;
+		}
+
+		String normalizedName = className.replace('.', '/');
+		JvmClassBundle bundle = workspace.getPrimaryResource().getJvmClassBundle();
+		JvmClassInfo existing = bundle.get(normalizedName);
+		if (existing == null) {
+			BridgeServer.sendJson(exchange, 404, ErrorMapper.classNotFound(className));
+			return;
+		}
+
+		bundle.remove(normalizedName);
+
+		JsonObject data = new JsonObject();
+		data.addProperty("deleted", true);
+		data.addProperty("className", normalizedName);
+		BridgeServer.sendJson(exchange, 200, JsonUtil.successResponse(data));
+		logger.info("[MCP] Deleted class: {}", normalizedName);
 	}
 
 	private int countClasses(Workspace workspace) {
